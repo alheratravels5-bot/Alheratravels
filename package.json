@@ -1,0 +1,48 @@
+{
+  "name": "alhera-travels-erp",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "app.js",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "build:zip": "vite build && python3 -c \"import zipfile, os; files = ['app.js', 'server.js', 'package.json', '.htaccess', '.env.example', 'NAMECHEAP_DEPLOYMENT_GUIDE.md']; [zipfile.ZipFile('namecheap-deployment.zip', 'w', zipfile.ZIP_DEFLATED).write(f, arcname=f) for f in files if os.path.exists(f)]; zipf = zipfile.ZipFile('namecheap-deployment.zip', 'a', zipfile.ZIP_DEFLATED); [zipf.write(os.path.join(r, fl), arcname=os.path.relpath(os.path.join(r, fl), '.')) for r, _, fls in os.walk('dist') for fl in fls]; zipf.close(); print('Ready: namecheap-deployment.zip')\"",
+    "start": "node app.js",
+    "preview": "vite preview",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@supabase/supabase-js": "^2.112.4",
+    "@tailwindcss/vite": "^4.1.14",
+    "@types/jszip": "^3.4.1",
+    "@vitejs/plugin-react": "^5.0.4",
+    "canvas-confetti": "^1.9.4",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "firebase": "^12.18.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "vite": "^6.2.3"
+  },
+  "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
+  }
+}

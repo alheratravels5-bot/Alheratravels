@@ -1,0 +1,81 @@
+{
+  "entities": {
+    "Candidate": {
+      "title": "Candidate",
+      "description": "Candidate dossier with passport, trade, visa and flight details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "trackingId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "passportNumber": { "type": "string" },
+        "status": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "trade": { "type": "string" }
+      },
+      "required": ["id", "trackingId", "fullName", "passportNumber", "status"]
+    },
+    "JobVacancy": {
+      "title": "JobVacancy",
+      "description": "Saudi Arabia Overseas Employment Demand",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "jobCode": { "type": "string" },
+        "title": { "type": "string" },
+        "country": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "jobCode", "title", "country", "status"]
+    },
+    "UmrahPackage": {
+      "title": "UmrahPackage",
+      "description": "Pilgrimage package and tour schedule",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "packageCode": { "type": "string" },
+        "name": { "type": "string" },
+        "durationDays": { "type": "number" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "packageCode", "name", "durationDays"]
+    },
+    "PartnerOffice": {
+      "title": "PartnerOffice",
+      "description": "Associate recruitment sub-agent office",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agencyName": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "phone": { "type": "string" },
+        "city": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "agencyName", "contactPerson", "phone", "status"]
+    }
+  },
+  "firestore": {
+    "/candidates/{candidateId}": {
+      "schema": "Candidate",
+      "description": "Overseas job seeker and worker files"
+    },
+    "/jobs/{jobId}": {
+      "schema": "JobVacancy",
+      "description": "Saudi demand and work visa job listings"
+    },
+    "/umrah_packages/{packageId}": {
+      "schema": "UmrahPackage",
+      "description": "Published Umrah pilgrimage packages"
+    },
+    "/partners/{partnerId}": {
+      "schema": "PartnerOffice",
+      "description": "Sub-agent network directory"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "AgencyInfo" },
+      "description": "System and agency branding settings"
+    }
+  }
+}
