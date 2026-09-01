@@ -1868,9 +1868,11 @@ export const getCandidates = (): Candidate[] => {
   }
   return sanitized;
 };
-export const saveCandidates = (data: Candidate[]) => {
+export const saveCandidates = (data: Candidate[], syncToCloud: boolean = true) => {
   saveItem(KEYS.CANDIDATES, data);
-  syncCollectionToSupabase('candidates', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('candidates', data);
+  }
 };
 
 export const getJobs = (): JobVacancy[] => {
@@ -1880,9 +1882,11 @@ export const getJobs = (): JobVacancy[] => {
   return enrichAllJobsWithMetrics(list, candidates);
 };
 
-export const saveJobs = (data: JobVacancy[]) => {
+export const saveJobs = (data: JobVacancy[], syncToCloud: boolean = true) => {
   saveItem(KEYS.JOBS, data);
-  syncCollectionToSupabase('jobs', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('jobs', data);
+  }
 };
 
 export const updateSingleJob = (job: JobVacancy, adminName = 'Admin'): JobVacancy[] => {
@@ -2069,18 +2073,22 @@ export const getUmrahPackages = (): UmrahPackage[] => {
   const raw = loadItem<UmrahPackage[]>(KEYS.UMRAH_PACKAGES, INITIAL_UMRAH_PACKAGES);
   return Array.isArray(raw) ? raw : INITIAL_UMRAH_PACKAGES;
 };
-export const saveUmrahPackages = (data: UmrahPackage[]) => {
+export const saveUmrahPackages = (data: UmrahPackage[], syncToCloud: boolean = true) => {
   saveItem(KEYS.UMRAH_PACKAGES, data);
-  syncCollectionToSupabase('packages', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('packages', data);
+  }
 };
 
 export const getUmrahBookings = (): UmrahBooking[] => {
   const raw = loadItem<UmrahBooking[]>(KEYS.UMRAH_BOOKINGS, INITIAL_UMRAH_BOOKINGS);
   return Array.isArray(raw) ? raw : INITIAL_UMRAH_BOOKINGS;
 };
-export const saveUmrahBookings = (data: UmrahBooking[]) => {
+export const saveUmrahBookings = (data: UmrahBooking[], syncToCloud: boolean = true) => {
   saveItem(KEYS.UMRAH_BOOKINGS, data);
-  syncCollectionToSupabase('bookings', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('bookings', data);
+  }
 };
 
 export const getPartners = (): PartnerOffice[] => {
@@ -2101,36 +2109,44 @@ export const getPartners = (): PartnerOffice[] => {
     };
   });
 };
-export const savePartners = (data: PartnerOffice[]) => {
+export const savePartners = (data: PartnerOffice[], syncToCloud: boolean = true) => {
   saveItem(KEYS.PARTNERS, data);
-  syncCollectionToSupabase('partners', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('partners', data);
+  }
 };
 
 export const getVisaBatches = (): VisaBatch[] => {
   const raw = loadItem<VisaBatch[]>(KEYS.VISA_BATCHES, INITIAL_VISA_BATCHES);
   return Array.isArray(raw) ? raw : INITIAL_VISA_BATCHES;
 };
-export const saveVisaBatches = (data: VisaBatch[]) => {
+export const saveVisaBatches = (data: VisaBatch[], syncToCloud: boolean = true) => {
   saveItem(KEYS.VISA_BATCHES, data);
-  syncCollectionToSupabase('visa_batches', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('visa_batches', data);
+  }
 };
 
 export const getIndividualVisas = (): IndividualVisa[] => {
   const raw = loadItem<IndividualVisa[]>(KEYS.INDIVIDUAL_VISAS, INITIAL_INDIVIDUAL_VISAS);
   return Array.isArray(raw) ? raw : INITIAL_INDIVIDUAL_VISAS;
 };
-export const saveIndividualVisas = (data: IndividualVisa[]) => {
+export const saveIndividualVisas = (data: IndividualVisa[], syncToCloud: boolean = true) => {
   saveItem(KEYS.INDIVIDUAL_VISAS, data);
-  syncCollectionToSupabase('individual_visas', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('individual_visas', data);
+  }
 };
 
 export const getPartnerPayments = (): PartnerOfficePayment[] => {
   const raw = loadItem<PartnerOfficePayment[]>(KEYS.PARTNER_PAYMENTS, INITIAL_PARTNER_PAYMENTS);
   return Array.isArray(raw) ? raw : INITIAL_PARTNER_PAYMENTS;
 };
-export const savePartnerPayments = (data: PartnerOfficePayment[]) => {
+export const savePartnerPayments = (data: PartnerOfficePayment[], syncToCloud: boolean = true) => {
   saveItem(KEYS.PARTNER_PAYMENTS, data);
-  syncCollectionToSupabase('partner_payments', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('partner_payments', data);
+  }
 };
 
 export const getPartnerLedgerEntries = (): PartnerOfficeLedgerEntry[] => {
@@ -2138,9 +2154,11 @@ export const getPartnerLedgerEntries = (): PartnerOfficeLedgerEntry[] => {
   const list = Array.isArray(raw) ? raw : INITIAL_PARTNER_LEDGER;
   return computeRunningLedger(list);
 };
-export const savePartnerLedgerEntries = (data: PartnerOfficeLedgerEntry[]) => {
+export const savePartnerLedgerEntries = (data: PartnerOfficeLedgerEntry[], syncToCloud: boolean = true) => {
   saveItem(KEYS.PARTNER_LEDGER, data);
-  syncCollectionToSupabase('partner_ledger', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('partner_ledger', data);
+  }
 };
 export const getPartnerLedger = getPartnerLedgerEntries;
 export const savePartnerLedger = savePartnerLedgerEntries;
@@ -2149,9 +2167,11 @@ export const getPartnerAuditLogs = (): PartnerAuditLog[] => {
   const raw = loadItem<PartnerAuditLog[]>(KEYS.PARTNER_AUDIT_LOGS, INITIAL_AUDIT_LOGS);
   return Array.isArray(raw) ? raw : INITIAL_AUDIT_LOGS;
 };
-export const savePartnerAuditLogs = (data: PartnerAuditLog[]) => {
+export const savePartnerAuditLogs = (data: PartnerAuditLog[], syncToCloud: boolean = true) => {
   saveItem(KEYS.PARTNER_AUDIT_LOGS, data);
-  syncCollectionToSupabase('partner_audit_logs', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('partner_audit_logs', data);
+  }
 };
 
 export const addAuditLog = (
@@ -2477,9 +2497,11 @@ export const getSliders = (): SliderBanner[] => {
   const raw = loadItem<SliderBanner[]>(KEYS.SLIDERS, INITIAL_SLIDERS);
   return Array.isArray(raw) ? raw : INITIAL_SLIDERS;
 };
-export const saveSliders = (data: SliderBanner[]) => {
+export const saveSliders = (data: SliderBanner[], syncToCloud: boolean = true) => {
   saveItem(KEYS.SLIDERS, data);
-  syncCollectionToSupabase('sliders', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('sliders', data);
+  }
 };
 
 export const getMessageTemplates = (): MessageTemplate[] => {
@@ -2508,9 +2530,11 @@ export const getMessageTemplates = (): MessageTemplate[] => {
     };
   });
 };
-export const saveMessageTemplates = (data: MessageTemplate[]) => {
+export const saveMessageTemplates = (data: MessageTemplate[], syncToCloud: boolean = true) => {
   saveItem(KEYS.TEMPLATES, data);
-  syncCollectionToSupabase('templates', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('templates', data);
+  }
 };
 export const getSmsTemplates = getMessageTemplates;
 export const saveSmsTemplates = saveMessageTemplates;
@@ -2532,9 +2556,11 @@ export const getMessageLogs = (): MessageLog[] => {
     trackingId: log.trackingId || '',
   }));
 };
-export const saveMessageLogs = (data: MessageLog[]) => {
+export const saveMessageLogs = (data: MessageLog[], syncToCloud: boolean = true) => {
   saveItem(KEYS.MESSAGE_LOGS, data);
-  syncCollectionToSupabase('logs', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('logs', data);
+  }
 };
 export const getSentMessages = getMessageLogs;
 
@@ -2597,9 +2623,11 @@ export const getFollowUps = (): CrmFollowUp[] => {
   }));
 };
 
-export const saveFollowUps = (data: CrmFollowUp[]) => {
+export const saveFollowUps = (data: CrmFollowUp[], syncToCloud: boolean = true) => {
   saveItem(KEYS.CRM_FOLLOWUPS, data);
-  syncCollectionToSupabase('crm_followups', data);
+  if (syncToCloud) {
+    syncCollectionToSupabase('crm_followups', data);
+  }
 };
 
 export const addFollowUp = (
@@ -2789,9 +2817,11 @@ export const getAgencyInfo = (): AgencyInfo => {
   }
   return AGENCY_INFO;
 };
-export const saveAgencyInfo = (info: AgencyInfo) => {
+export const saveAgencyInfo = (info: AgencyInfo, syncToCloud: boolean = true) => {
   saveItem(KEYS.AGENCY_INFO, info);
-  syncCollectionToSupabase('agency_info', info);
+  if (syncToCloud) {
+    syncCollectionToSupabase('agency_info', info);
+  }
 };
 
 export function resetToInitialDemoData(): void {

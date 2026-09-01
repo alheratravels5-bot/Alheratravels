@@ -35,6 +35,7 @@ interface PublicPartnersAndAboutProps {
   agencyInfo?: AgencyInfo;
   onOpenLogin?: () => void;
   onNavigate?: (view: string) => void;
+  onRegisterPartner?: (partner: PartnerOffice) => void;
 }
 
 const FAQS = [
@@ -67,6 +68,7 @@ export const PublicPartnersAndAbout: React.FC<PublicPartnersAndAboutProps> = ({
   agencyInfo: propAgency,
   onOpenLogin,
   onNavigate,
+  onRegisterPartner,
 }) => {
   const [activeTab, setActiveTab] = useState<'about' | 'partners'>(
     (defaultSection === 'partners' || viewType === 'partners') ? 'partners' : 'about'
@@ -126,6 +128,9 @@ export const PublicPartnersAndAbout: React.FC<PublicPartnersAndAboutProps> = ({
     };
 
     savePartners([...allPartners, newPartner]);
+    if (onRegisterPartner) {
+      onRegisterPartner(newPartner);
+    }
 
     // Send WhatsApp notification
     const msg = `Assalamu Alaikum *AL-HERA TRAVELS*,\n\nI want to register as an Authorized Sub-Agent Partner:\n🏢 Agency: ${partnerAgencyName}\n👤 Contact Person: ${partnerContactPerson}\n📍 Location: ${partnerCity}, ${partnerState}\n📞 Phone: ${partnerPhone}\n\nPlease share agency partnership terms and quota allocations.`;

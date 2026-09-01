@@ -245,45 +245,45 @@ export default function App() {
 
           if (Array.isArray(d.candidates)) {
             if (d.candidates.length > 0) {
-              saveCandidates(d.candidates);
+              saveCandidates(d.candidates, false);
               setCandidates(d.candidates);
               hasCloudData = true;
             }
           }
           if (Array.isArray(d.jobs)) {
             if (d.jobs.length > 0) {
-              saveJobs(d.jobs);
+              saveJobs(d.jobs, false);
               setJobs(d.jobs);
               hasCloudData = true;
             }
           }
           if (Array.isArray(d.packages)) {
             if (d.packages.length > 0) {
-              saveUmrahPackages(d.packages);
+              saveUmrahPackages(d.packages, false);
               setPackages(d.packages);
               hasCloudData = true;
             }
           }
           if (Array.isArray(d.partners)) {
             if (d.partners.length > 0) {
-              savePartners(d.partners);
+              savePartners(d.partners, false);
               setPartners(d.partners);
               hasCloudData = true;
             }
           }
           if (Array.isArray(d.sliders) && d.sliders.length > 0) {
-            saveSliders(d.sliders);
+            saveSliders(d.sliders, false);
             setSliders(d.sliders);
             hasCloudData = true;
           }
-          if (Array.isArray(d.bookings) && d.bookings.length > 0) saveUmrahBookings(d.bookings);
-          if (Array.isArray(d.visaBatches) && d.visaBatches.length > 0) saveVisaBatches(d.visaBatches);
-          if (Array.isArray(d.individualVisas) && d.individualVisas.length > 0) saveIndividualVisas(d.individualVisas);
-          if (Array.isArray(d.partnerPayments) && d.partnerPayments.length > 0) savePartnerPayments(d.partnerPayments);
-          if (Array.isArray(d.crmFollowUps) && d.crmFollowUps.length > 0) saveFollowUps(d.crmFollowUps);
-          if (Array.isArray(d.templates) && d.templates.length > 0) saveMessageTemplates(d.templates);
-          if (Array.isArray(d.logs) && d.logs.length > 0) saveMessageLogs(d.logs);
-          if (d.agencyInfo) saveAgencyInfo(d.agencyInfo);
+          if (Array.isArray(d.bookings) && d.bookings.length > 0) saveUmrahBookings(d.bookings, false);
+          if (Array.isArray(d.visaBatches) && d.visaBatches.length > 0) saveVisaBatches(d.visaBatches, false);
+          if (Array.isArray(d.individualVisas) && d.individualVisas.length > 0) saveIndividualVisas(d.individualVisas, false);
+          if (Array.isArray(d.partnerPayments) && d.partnerPayments.length > 0) savePartnerPayments(d.partnerPayments, false);
+          if (Array.isArray(d.crmFollowUps) && d.crmFollowUps.length > 0) saveFollowUps(d.crmFollowUps, false);
+          if (Array.isArray(d.templates) && d.templates.length > 0) saveMessageTemplates(d.templates, false);
+          if (Array.isArray(d.logs) && d.logs.length > 0) saveMessageLogs(d.logs, false);
+          if (d.agencyInfo) saveAgencyInfo(d.agencyInfo, false);
 
           // If Supabase was clean/empty, auto-migrate existing local workspace records to Supabase without loss
           if (!hasCloudData) {
@@ -802,6 +802,10 @@ export default function App() {
                 viewType={publicTab}
                 defaultSection={publicTab}
                 onOpenLogin={() => setIsLoginModalOpen(true)}
+                onRegisterPartner={(newPartner) => {
+                  setPartners(getPartners());
+                  showToast(`Partner inquiry for ${newPartner.agencyName} submitted & synced.`);
+                }}
               />
             )}
           </main>
