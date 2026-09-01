@@ -814,3 +814,237 @@ export function generateSelectionLetterPdf(candidate: Candidate, agencyInfo?: Ag
 
   doc.save(`AL-HERA-Selection-Letter-${candidate.trackingId}.pdf`);
 }
+
+/**
+ * Generates an official B2B Partner Office Statement of Account & Ledger PDF.
+ */
+export function generatePartnerStatementPdf(
+  partner: any,
+  ledgerEntries: any[],
+  agencyInfo?: AgencyInfo
+): void {
+  const agency = agencyInfo || getAgencyInfo();
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const navy = [15, 30, 54];
+  const gold = [212, 175, 55];
+  const slateDark = [30, 41, 59];
+  const slateLight = [248, 250, 252];
+
+  // Header Banner
+  doc.setFillColor(navy[0], navy[1], navy[2]);
+  doc.rect(0, 0, 210, 36, 'F');
+
+  doc.setFillColor(gold[0], gold[1], gold[2]);
+  doc.rect(0, 36, 210, 2, 'F');
+
+  // Title & Header Text
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text(agency.name, 15, 14);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(212, 175, 55);
+  doc.text('B2B PARTNER OFFICE ACCOUNT STATEMENT & FINANCIAL LEDGER', 15, 20);
+
+  doc.setTextColor(220, 225, 235);
+  doc.setFontSize(8);
+  doc.text(`Head Office: ${agency.headOffice || agency.address || 'Mumbai / Delhi'} | Phone: ${agency.phone}`, 15, 26);
+  doc.text(`Email: ${agency.email} | GST / License: ${agency.licenseNumber || 'Approved'}`, 15, 31);
+
+  // Statement Ref on top right
+  const dateStr = new Date().toLocaleDateString('en-GB');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(212, 175, 55);
+  doc.text(`Statement: ${partner.partnerCode || 'PTR-LEDGER'}`, 195, 14, { align: 'right' });
+  doc.setTextColor(200, 210, 225);
+  doc.text(`Generated: ${dateStr}`, 195, 20, { align: 'right' });
+  doc.text(`Account: ${partner.agencyName}`, 195, 26, { align: 'right' });
+
+  // Partner Info Box
+  doc.setFillColor(slateLight[0], slateLight[1], slateLight[2]);
+  doc.roundedRect(15, 42, 180, 24, 2, 2, 'F');
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(15, 42, 180, 24, 2, 2, 'S');
+
+  doc.setTextColor(navy[0], navy[1], navy[2]);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`PARTNER: ${partner.agencyName.toUpperCase()} (${partner.partnerCode || 'PTR'})`, 20, 48);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Contact Person: ${partner.contactPerson || 'N/A'} | Phone: ${partner.phone} | WhatsApp: ${partner.whatsapp || partner.phone}`, 20, 54);
+  doc.text(`Location: ${partner.city || ''}, ${partner.state || ''}, ${partner.country || 'India'} | Status: ${partner.status || 'Active'}`, 20, 60);
+
+  // Financial Summary Cards
+  const totalDebit = ledgerEntries.reduce((sum: number, e: any) => sum + (Number(e.debit) || 0), 0);
+  const totalCredit = ledgerEntries.reduce((sum: number, e: any) => sum + (Number(e.credit) || 0), 0);
+  const totalCommission = ledgerEntries.reduce((sum: number, e: any) => sum + (Number(e.commission) || 0), 0);
+  const outstanding = partner.outstandingPayable !== undefined ? partner.outstandingPayable : Math.max(0, totalCredit - totalDebit);
+
+  const cardY = 70;
+  const cardW = 42;
+  const cardH = 16;
+
+  // Card 1: Total Payable (Credit)
+  doc.setFillColor(241, 245, 249);
+  doc.roundedRect(15, cardY, cardW, cardH, 1.5, 1.5, 'F');
+  doc.setFontSize(6.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text('TOTAL PAYABLE (CREDIT)', 18, cardY + 5);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(225, 29, 72);
+  doc.text(`INR ${totalCredit.toLocaleString('en-IN')}`, 18, cardY + 12);
+
+  // Card 2: Total Settled (Debit)
+  doc.setFillColor(241, 245, 249);
+  doc.roundedRect(61, cardY, cardW, cardH, 1.5, 1.5, 'F');
+  doc.setFontSize(6.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('TOTAL PAID (DEBIT)', 64, cardY + 5);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(16, 185, 129);
+  doc.text(`INR ${totalDebit.toLocaleString('en-IN')}`, 64, cardY + 12);
+
+  // Card 3: Commission Earned
+  doc.setFillColor(241, 245, 249);
+  doc.roundedRect(107, cardY, cardW, cardH, 1.5, 1.5, 'F');
+  doc.setFontSize(6.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('COMMISSION PROFIT', 110, cardY + 5);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(217, 119, 6);
+  doc.text(`INR ${totalCommission.toLocaleString('en-IN')}`, 110, cardY + 12);
+
+  // Card 4: Net Balance Due
+  doc.setFillColor(navy[0], navy[1], navy[2]);
+  doc.roundedRect(153, cardY, cardW, cardH, 1.5, 1.5, 'F');
+  doc.setFontSize(6.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(212, 175, 55);
+  doc.text('OUTSTANDING BALANCE', 156, cardY + 5);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(255, 255, 255);
+  doc.text(`INR ${outstanding.toLocaleString('en-IN')}`, 156, cardY + 12);
+
+  // Table Header
+  const tableHeaderY = 92;
+  doc.setFillColor(navy[0], navy[1], navy[2]);
+  doc.rect(15, tableHeaderY, 180, 7, 'F');
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(255, 255, 255);
+
+  doc.text('TXN REF & DATE', 18, tableHeaderY + 5);
+  doc.text('TYPE', 58, tableHeaderY + 5);
+  doc.text('DESCRIPTION / CANDIDATE', 88, tableHeaderY + 5);
+  doc.text('PAID (DR)', 142, tableHeaderY + 5, { align: 'right' });
+  doc.text('PAYABLE (CR)', 168, tableHeaderY + 5, { align: 'right' });
+  doc.text('BALANCE', 192, tableHeaderY + 5, { align: 'right' });
+
+  // Rows
+  let curY = tableHeaderY + 8;
+  const entriesToShow = ledgerEntries.slice(0, 22);
+
+  if (entriesToShow.length === 0) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text('No ledger transactions recorded for this partner account.', 105, curY + 10, { align: 'center' });
+  } else {
+    entriesToShow.forEach((entry: any, idx: number) => {
+      const isEven = idx % 2 === 0;
+      doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
+      doc.rect(15, curY - 1, 180, 7.5, 'F');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.8);
+      doc.setTextColor(30, 41, 59);
+      doc.text(entry.transactionId || `TXN-${idx + 1}`, 18, curY + 3);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6);
+      doc.setTextColor(100, 116, 139);
+      doc.text(entry.date || '', 18, curY + 6);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(51, 65, 85);
+      doc.text((entry.type || '').slice(0, 18), 58, curY + 4.5);
+
+      const desc = (entry.description || '').slice(0, 32);
+      doc.text(desc, 88, curY + 4.5);
+
+      // Debit (Paid)
+      const debit = Number(entry.debit) || 0;
+      doc.setTextColor(16, 185, 129);
+      doc.setFont('helvetica', 'bold');
+      doc.text(debit > 0 ? `${debit.toLocaleString('en-IN')}` : '-', 142, curY + 4.5, { align: 'right' });
+
+      // Credit (Payable)
+      const credit = Number(entry.credit) || 0;
+      doc.setTextColor(225, 29, 72);
+      doc.text(credit > 0 ? `${credit.toLocaleString('en-IN')}` : '-', 168, curY + 4.5, { align: 'right' });
+
+      // Balance
+      const bal = Number(entry.balance) || 0;
+      doc.setTextColor(navy[0], navy[1], navy[2]);
+      doc.text(`${bal.toLocaleString('en-IN')}`, 192, curY + 4.5, { align: 'right' });
+
+      curY += 7.5;
+    });
+  }
+
+  // Footer & Signatures
+  const signY = 252;
+  doc.setDrawColor(148, 163, 184);
+  doc.line(25, signY + 15, 75, signY + 15);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Partner Office Authorized Signatory', 25, signY + 20);
+
+  doc.setDrawColor(gold[0], gold[1], gold[2]);
+  doc.setLineWidth(1);
+  doc.roundedRect(125, signY - 4, 70, 26, 2, 2, 'S');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(navy[0], navy[1], navy[2]);
+  doc.text('FOR AL-HERA TRAVELS', 160, signY + 2, { align: 'center' });
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(7.5);
+  doc.setTextColor(212, 175, 55);
+  doc.text('[ Accounts & Finance Division ]', 160, signY + 10, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Computer Generated Statement', 160, signY + 18, { align: 'center' });
+
+  // Footer bar
+  doc.setFillColor(navy[0], navy[1], navy[2]);
+  doc.rect(0, 287, 210, 10, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(7);
+  doc.text(`${agency.name} • B2B Partner Network Portal • Helpline: ${agency.phone}`, 105, 293, { align: 'center' });
+
+  doc.save(`AL-HERA-Partner-Statement-${(partner.agencyName || 'Partner').replace(/\s+/g, '_')}-${partner.partnerCode || 'PTR'}.pdf`);
+}
+

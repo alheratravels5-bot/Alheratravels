@@ -21,9 +21,13 @@ const STORAGE_KEY_SUPABASE = 'al_hera_supabase_config';
 
 const env = (import.meta as any).env || {};
 
+// Production Supabase Project Config (alheratravels live project)
+const PROD_SUPABASE_URL = 'https://cghzoyuzvhybdvipuwtb.supabase.co';
+const PROD_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNnaHpveXV6dmh5YmR2aXB1d3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgxNjk4NjksImV4cCI6MjEwMzc0NTg2OX0.aLyS7DCemOSQlvtiHQHZj1rP87ylYpt7av3UKH5B3x0';
+
 export const DEFAULT_SUPABASE_CONFIG: SupabaseConfig = {
-  url: env.VITE_SUPABASE_URL || 'https://alheratravels-agency.supabase.co',
-  anonKey: env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFsaGVyYXRyYXZlbHMiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTY3MDAwMDAwMCwiZXhwIjoxOTg1NTc2MDAwfQ.demo-signature',
+  url: env.VITE_SUPABASE_URL || PROD_SUPABASE_URL,
+  anonKey: env.VITE_SUPABASE_ANON_KEY || PROD_SUPABASE_ANON_KEY,
   isConnected: true,
   autoSync: true,
 };
@@ -79,6 +83,20 @@ export function getSupabase(): SupabaseClient | null {
     supabaseInstance = initSupabaseClient();
   }
   return supabaseInstance;
+}
+
+/**
+ * Signs out from Supabase Auth and clears any cached Supabase session.
+ */
+export async function signOutFromSupabaseAuth(): Promise<void> {
+  try {
+    const supabase = getSupabase();
+    if (supabase && supabase.auth) {
+      await supabase.auth.signOut();
+    }
+  } catch (err) {
+    console.warn('Supabase Auth signOut error:', err);
+  }
 }
 
 /**

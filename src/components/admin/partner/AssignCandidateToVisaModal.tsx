@@ -45,11 +45,6 @@ export const AssignCandidateToVisaModal: React.FC<AssignCandidateToVisaModalProp
   const [isManualCommission, setIsManualCommission] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
-  if (!isOpen) return null;
-
-  const currentVisa = initialVisa || availableVisas.find((v) => v.id === selectedVisaId || v.visaId === selectedVisaId);
-  const visaAmount = currentVisa?.visaAmount || 35000;
-
   // Filter candidates: candidates who don't already have this exact visa
   const eligibleCandidates = useMemo(() => {
     const query = candidateSearch.toLowerCase().trim();
@@ -63,6 +58,11 @@ export const AssignCandidateToVisaModal: React.FC<AssignCandidateToVisaModalProp
       return matchesSearch;
     });
   }, [candidates, candidateSearch]);
+
+  if (!isOpen) return null;
+
+  const currentVisa = initialVisa || availableVisas.find((v) => v.id === selectedVisaId || v.visaId === selectedVisaId);
+  const visaAmount = currentVisa?.visaAmount || 35000;
 
   const selectedCandidate = candidates.find((c) => c.id === selectedCandidateId);
 

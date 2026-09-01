@@ -28,12 +28,19 @@ import {
 } from 'lucide-react';
 
 // Authentication & Auto-Logout Layer
-import { authenticateUser, useAutoLogout, DEFAULT_INACTIVITY_TIMEOUT_MS } from './lib/auth';
+import {
+  authenticateUser,
+  useAutoLogout,
+  DEFAULT_INACTIVITY_TIMEOUT_MS,
+  INACTIVITY_EXPIRED_MESSAGE,
+  reportUserActivity
+} from './lib/auth';
 import {
   subscribeToSupabaseRealtime,
   pullAllFromSupabase,
   pushAllToSupabase,
-  deleteRecordFromSupabase
+  deleteRecordFromSupabase,
+  signOutFromSupabaseAuth
 } from './lib/supabase';
 
 // Types
@@ -153,20 +160,53 @@ export default function App() {
   };
 
   // Auto-Logout on Inactivity / Manual Sign Out
-  const handleLogout = (customMessage?: string | React.MouseEvent) => {
+  const handleLogout = async (customMessage?: string | React.MouseEvent, isExpired: boolean = false) => {
+    // 1. Securely sign out from Supabase Auth
+    try {
+      await signOutFromSupabaseAuth();
+    } catch (err) {
+      console.warn('Supabase auth sign out warning:', err);
+    }
+
+    // 2. Clear local user session & activity timestamp
     setCurrentUser(null);
     saveCurrentUser(null);
-    setCurrentView('public');
-    const msg = typeof customMessage === 'string' && customMessage.trim().length > 0 
-      ? customMessage 
-      : 'Logged out of Admin Portal.';
-    showToast(msg, 'info');
+    try {
+      localStorage.removeItem('al_hera_last_activity_v1');
+    } catch {
+      // ignore
+    }
+
+    const isSessionExpired =
+      isExpired ||
+      (typeof customMessage === 'string' &&
+        (customMessage === INACTIVITY_EXPIRED_MESSAGE ||
+          customMessage.toLowerCase().includes('inactivity') ||
+          customMessage.toLowerCase().includes('expired')));
+
+    if (isSessionExpired) {
+      // Direct redirect to Admin Login page / modal with expiration notification
+      setCurrentView('admin');
+      setIsLoginModalOpen(true);
+      setLoginError(INACTIVITY_EXPIRED_MESSAGE);
+      setLoginPassword('');
+      showToast(INACTIVITY_EXPIRED_MESSAGE, 'error');
+    } else {
+      setCurrentView('public');
+      setIsLoginModalOpen(false);
+      setLoginError('');
+      const msg =
+        typeof customMessage === 'string' && customMessage.trim().length > 0
+          ? customMessage
+          : 'Logged out of Admin Portal.';
+      showToast(msg, 'info');
+    }
   };
 
   const { remainingSeconds, resetTimer } = useAutoLogout(
     currentUser,
     (reason?: string) => {
-      handleLogout(reason || '🔒 Session timed out due to inactivity for your security.');
+      handleLogout(reason || INACTIVITY_EXPIRED_MESSAGE, true);
     },
     DEFAULT_INACTIVITY_TIMEOUT_MS
   );
@@ -846,6 +886,12 @@ export default function App() {
                   <Lock className="w-7 h-7" />
                 </div>
                 <h3 className="font-bold text-xl text-[#0F1E36]">Staff Authentication Required</h3>
+                {loginError && (
+                  <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-2xl text-amber-900 text-xs font-semibold flex items-center justify-center gap-2 animate-fade-in shadow-sm">
+                    <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                    <span>{loginError}</span>
+                  </div>
+                )}
                 <p className="text-xs text-slate-500">
                   Please log in with your authorized Al-Hera staff or administrator credentials to access this operations console.
                 </p>
@@ -858,7 +904,10 @@ export default function App() {
                     <span>Open Staff Login</span>
                   </button>
                   <button
-                    onClick={() => setCurrentView('public')}
+                    onClick={() => {
+                      setCurrentView('public');
+                      setLoginError('');
+                    }}
                     className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all"
                   >
                     Public Website
@@ -867,11 +916,18 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="flex min-h-screen bg-slate-100 text-slate-900 overflow-x-hidden">
+            <div
+              className="flex min-h-screen bg-slate-100 text-slate-900 overflow-x-hidden"
+              onMouseMove={() => resetTimer()}
+              onClick={() => resetTimer()}
+              onKeyDown={() => resetTimer()}
+            >
               {/* Left Sidebar (Desktop fixed + Mobile Drawer) */}
               <AdminSidebar
                 currentTab={adminTab}
                 onTabChange={(tab) => {
+                  resetTimer();
+                  reportUserActivity();
                   if (tab === 'supabase') {
                     setIsSupabaseModalOpen(true);
                   } else {
@@ -914,7 +970,7 @@ export default function App() {
                     {/* Auto-Logout Status Badge */}
                     <div
                       className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 text-[11px] sm:text-xs font-semibold"
-                      title="Auto-Logout security timer automatically resets on mouse/touch/keyboard activity"
+                      title="Auto-Logout security timer (5 minutes) automatically resets on any mouse, keyboard, touch, or navigation action"
                     >
                       <Clock className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-amber-600 animate-spin-slow shrink-0" />
                       <span className="hidden md:inline">Idle:</span>
@@ -1132,7 +1188,7 @@ export default function App() {
               <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center gap-2 text-[11px] text-slate-600">
                 <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span>
-                  <strong>Inactivity Protection:</strong> Sessions automatically terminate after 15 minutes of idle time.
+                  <strong>Inactivity Protection:</strong> Sessions automatically terminate after 5 minutes of idle time.
                 </span>
               </div>
 

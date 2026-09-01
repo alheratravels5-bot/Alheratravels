@@ -42,7 +42,9 @@ import {
   AgencyInfo
 } from '../../../types';
 import { getAgencyInfo } from '../../../lib/storage';
-import { computePartnerFinancials } from '../../../lib/partnerCalculations';
+import { computePartnerFinancials, computeRunningLedger } from '../../../lib/partnerCalculations';
+import { generatePartnerStatementPdf } from '../../../lib/pdfGenerator';
+import { PartnerLedgerModal } from './PartnerLedgerModal';
 
 interface PartnerDetailViewProps {
   partner: PartnerOffice;
@@ -78,6 +80,7 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
   const [activeTab, setActiveTab] = useState<
     'overview' | 'batches' | 'visas' | 'candidates' | 'payments' | 'ledger' | 'audit'
   >('overview');
+  const [isLedgerModalOpen, setIsLedgerModalOpen] = useState<boolean>(false);
 
   // Filter criteria
   const [visaSearch, setVisaSearch] = useState('');
@@ -112,10 +115,88 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
     [allPayments, partner.id]
   );
 
-  const partnerLedger = useMemo(
-    () => allLedger.filter((l) => l.partnerOfficeId === partner.id),
-    [allLedger, partner.id]
-  );
+  const partnerLedger = useMemo(() => {
+    const existing = allLedger.filter((l) => l.partnerOfficeId === partner.id);
+    const existingTxnIds = new Set(existing.map((e) => e.transactionId));
+    const synthesized: PartnerOfficeLedgerEntry[] = [...existing];
+
+    // Check batches
+    partnerBatches.forEach((b) => {
+      const txnId = `TXN-VB-${b.batchId || b.id}`;
+      if (!existingTxnIds.has(txnId)) {
+        synthesized.push({
+          id: 'syn-batch-' + b.id,
+          transactionId: txnId,
+          partnerOfficeId: partner.id,
+          date: b.dateReceived || new Date().toISOString().split('T')[0],
+          type: 'Visa Received',
+          description: `Received Visa Batch ${b.batchId || ''} (${b.totalVisas} Visas @ ₹${(b.amountPerVisa || 0).toLocaleString('en-IN')})`,
+          debit: 0,
+          credit: Number(b.totalAmount) || (Number(b.totalVisas) * Number(b.amountPerVisa)) || 0,
+          commission: 0,
+          balance: 0,
+          createdAt: b.createdAt || new Date().toISOString(),
+        });
+        existingTxnIds.add(txnId);
+      }
+    });
+
+    // Check candidate assignments
+    partnerVisas
+      .filter((v) => v.candidateId || v.candidateName)
+      .forEach((v) => {
+        const txnId = `TXN-ASG-${v.visaId || v.id}`;
+        if (!existingTxnIds.has(txnId)) {
+          const cand = allCandidates.find((c) => c.id === v.candidateId);
+          const candName = cand?.fullName || v.candidateName || 'Candidate';
+          const candAmt = Number(cand?.packageFee || v.candidateAmount || v.visaAmount || 0);
+          const visaAmt = Number(v.visaAmount || 0);
+          const comm = Math.max(0, candAmt - visaAmt);
+
+          synthesized.push({
+            id: 'syn-visa-' + v.id,
+            transactionId: txnId,
+            partnerOfficeId: partner.id,
+            date: v.assignedAt ? v.assignedAt.split('T')[0] : new Date().toISOString().split('T')[0],
+            type: 'Candidate Assigned',
+            description: `Candidate Assigned: ${candName} (${v.jobTitle}) - Visa: ${v.visaId}`,
+            visaId: v.visaId,
+            candidateId: v.candidateId,
+            candidateName: candName,
+            debit: 0,
+            credit: v.partnerPayableAmount !== undefined ? Number(v.partnerPayableAmount) : visaAmt,
+            commission: comm,
+            balance: 0,
+            createdAt: v.assignedAt || new Date().toISOString(),
+          });
+          existingTxnIds.add(txnId);
+        }
+      });
+
+    // Check payments
+    partnerPayments.forEach((p) => {
+      const txnId = `TXN-PMT-${p.id}`;
+      if (!existingTxnIds.has(txnId)) {
+        synthesized.push({
+          id: 'syn-pmt-' + p.id,
+          transactionId: txnId,
+          partnerOfficeId: partner.id,
+          date: p.paymentDate || new Date().toISOString().split('T')[0],
+          type: 'Payment Made',
+          description: `Payment Settled via ${p.paymentMethod || 'Bank Transfer'}${p.referenceNumber ? ` (Ref: ${p.referenceNumber})` : ''}`,
+          debit: Number(p.amount) || 0,
+          credit: 0,
+          commission: 0,
+          balance: 0,
+          referenceNumber: p.referenceNumber,
+          createdAt: p.createdAt || new Date().toISOString(),
+        });
+        existingTxnIds.add(txnId);
+      }
+    });
+
+    return computeRunningLedger(synthesized);
+  }, [allLedger, partner.id, partnerBatches, partnerVisas, allCandidates, partnerPayments]);
 
   const partnerAuditLogs = useMemo(
     () => allAuditLogs.filter((a) => a.partnerOfficeId === partner.id),
@@ -892,18 +973,31 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
       {/* TAB 6: LEDGER */}
       {activeTab === 'ledger' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="font-bold text-sm text-[#0F1E36]">Chronological Account Ledger</h3>
+              <h3 className="font-bold text-sm text-[#0F1E36]">Chronological Account Ledger ({partnerLedger.length} Transactions)</h3>
               <p className="text-xs text-slate-500">Live running balance of debits, credits, and commissions.</p>
             </div>
-            <button
-              onClick={onOpenFullLedger}
-              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-sm"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>Full Print / Export Statement</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => generatePartnerStatementPdf(partner, partnerLedger, agency)}
+                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                title="Download formatted official PDF statement with letterhead"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>PDF Statement</span>
+              </button>
+              <button
+                onClick={() => {
+                  setIsLedgerModalOpen(true);
+                  onOpenFullLedger?.();
+                }}
+                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Full Ledger / Statement</span>
+              </button>
+            </div>
           </div>
 
           <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
@@ -977,6 +1071,18 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Partner Ledger Statement Modal */}
+      <PartnerLedgerModal
+        isOpen={isLedgerModalOpen}
+        onClose={() => setIsLedgerModalOpen(false)}
+        partner={partner}
+        ledgerEntries={partnerLedger}
+        batches={allBatches}
+        visas={allVisas}
+        candidates={allCandidates}
+        payments={allPayments}
+      />
     </div>
   );
 };

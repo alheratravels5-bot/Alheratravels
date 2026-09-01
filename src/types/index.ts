@@ -342,6 +342,7 @@ export interface IndividualVisa {
   // Visa Lifecycle
   visaStatus: VisaStatus;
   dateAssigned?: string;
+  assignedAt?: string;
   dateUsed?: string;
   notes?: string;
   createdAt: string;
@@ -392,7 +393,7 @@ export interface PartnerOfficeLedgerEntry {
   debit: number; // Reduces partner payable balance (e.g. Payments made to partner)
   credit: number; // Increases partner payable balance (e.g. Visas used where amount is owed to partner)
   commission: number; // Al-Hera commission
-  payment: number; // Cash/Bank amount paid
+  payment?: number; // Cash/Bank amount paid
   balance: number; // Running payable balance
   paymentMethod?: string;
   referenceNumber?: string;

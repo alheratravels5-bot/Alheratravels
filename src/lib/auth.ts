@@ -273,9 +273,24 @@ export function authenticateUser(emailInput: string, passwordInput: string): Aut
 
 /**
  * Auto-Logout Inactivity Hook
- * Automatically logs out the user after inactivity timeout (default: 15 minutes)
+ * Automatically logs out the admin after 5 minutes (300 seconds) of inactivity.
+ * Resets whenever the admin performs any action, moves/clicks on dashboard, or navigates.
  */
-export const DEFAULT_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 Minutes
+export const DEFAULT_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 Minutes (300 Seconds)
+export const INACTIVITY_EXPIRED_MESSAGE = 'Your session expired due to inactivity. Please login again.';
+
+/**
+ * Dispatches an activity signal across the window to immediately reset the inactivity timer.
+ */
+export function reportUserActivity(): void {
+  try {
+    const now = Date.now();
+    localStorage.setItem(LAST_ACTIVITY_KEY, now.toString());
+    window.dispatchEvent(new CustomEvent('al-hera-user-activity', { detail: { timestamp: now } }));
+  } catch {
+    // ignore storage errors
+  }
+}
 
 export function useAutoLogout(
   currentUser: AppUser | null,
@@ -330,21 +345,68 @@ export function useAutoLogout(
       // ignore
     }
 
-    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+    const activityEvents = [
+      'mousedown',
+      'mousemove',
+      'keydown',
+      'scroll',
+      'touchstart',
+      'touchmove',
+      'click',
+      'wheel',
+      'pointerdown',
+      'pointermove',
+      'focus',
+    ];
     
-    // Throttled activity handler
+    // Throttled activity handler (500ms)
     let lastHandled = 0;
     const handleActivity = () => {
       const now = Date.now();
-      if (now - lastHandled > 2000) {
+      if (now - lastHandled > 500) {
         lastHandled = now;
         resetTimer();
+      }
+    };
+
+    const handleCustomActivity = () => {
+      resetTimer();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const now = Date.now();
+        const rawStored = localStorage.getItem(LAST_ACTIVITY_KEY);
+        const stored = rawStored ? Number(rawStored) : 0;
+        if (stored > 0 && now - stored >= timeoutMs) {
+          // Tab became visible after expiry
+          if (onLogoutRef.current) {
+            onLogoutRef.current(INACTIVITY_EXPIRED_MESSAGE);
+          }
+        } else {
+          resetTimer();
+        }
       }
     };
 
     activityEvents.forEach((event) => {
       window.addEventListener(event, handleActivity, { passive: true });
     });
+    window.addEventListener('al-hera-user-activity', handleCustomActivity);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Cross-tab storage sync
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === LAST_ACTIVITY_KEY && e.newValue) {
+        const storedVal = Number(e.newValue);
+        if (storedVal > 0) {
+          lastActivityRef.current = storedVal;
+          const elapsed = Math.max(0, Date.now() - storedVal);
+          setRemainingSeconds(Math.max(0, Math.floor((timeoutMs - elapsed) / 1000)));
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
 
     // Check interval every 1 second
     const interval = setInterval(() => {
@@ -361,15 +423,19 @@ export function useAutoLogout(
       const remaining = Math.max(0, Math.floor((timeoutMs - elapsed) / 1000));
       setRemainingSeconds(remaining);
 
-      // Only trigger logout if the user has been active long enough since mounting AND elapsed exceeds timeout
+      // Trigger logout if elapsed exceeds timeout and mounted long enough (> 3s)
       const timeSinceMount = now - mountedTimeRef.current;
-      if (elapsed >= timeoutMs && timeSinceMount > 5000) {
+      if (elapsed >= timeoutMs && timeSinceMount > 3000) {
         clearInterval(interval);
         activityEvents.forEach((event) => {
           window.removeEventListener(event, handleActivity);
         });
+        window.removeEventListener('al-hera-user-activity', handleCustomActivity);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('storage', handleStorage);
+
         if (onLogoutRef.current) {
-          onLogoutRef.current('Session timed out due to 15 minutes of inactivity for your security.');
+          onLogoutRef.current(INACTIVITY_EXPIRED_MESSAGE);
         }
       }
     }, 1000);
@@ -378,6 +444,9 @@ export function useAutoLogout(
       activityEvents.forEach((event) => {
         window.removeEventListener(event, handleActivity);
       });
+      window.removeEventListener('al-hera-user-activity', handleCustomActivity);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('storage', handleStorage);
       clearInterval(interval);
     };
   }, [currentUser?.id, currentUser?.email, resetTimer, timeoutMs]);
