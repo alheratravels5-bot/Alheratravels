@@ -242,38 +242,47 @@ export default function App() {
         if (pullRes.success && pullRes.data && isMounted) {
           const d = pullRes.data;
           let hasCloudData = false;
-          if (d.candidates && d.candidates.length > 0) {
-            saveCandidates(d.candidates);
-            setCandidates(d.candidates);
-            hasCloudData = true;
+
+          if (Array.isArray(d.candidates)) {
+            if (d.candidates.length > 0) {
+              saveCandidates(d.candidates);
+              setCandidates(d.candidates);
+              hasCloudData = true;
+            }
           }
-          if (d.jobs && d.jobs.length > 0) {
-            saveJobs(d.jobs);
-            setJobs(d.jobs);
-            hasCloudData = true;
+          if (Array.isArray(d.jobs)) {
+            if (d.jobs.length > 0) {
+              saveJobs(d.jobs);
+              setJobs(d.jobs);
+              hasCloudData = true;
+            }
           }
-          if (d.packages && d.packages.length > 0) {
-            saveUmrahPackages(d.packages);
-            setPackages(d.packages);
-            hasCloudData = true;
+          if (Array.isArray(d.packages)) {
+            if (d.packages.length > 0) {
+              saveUmrahPackages(d.packages);
+              setPackages(d.packages);
+              hasCloudData = true;
+            }
           }
-          if (d.partners && d.partners.length > 0) {
-            savePartners(d.partners);
-            setPartners(d.partners);
-            hasCloudData = true;
+          if (Array.isArray(d.partners)) {
+            if (d.partners.length > 0) {
+              savePartners(d.partners);
+              setPartners(d.partners);
+              hasCloudData = true;
+            }
           }
-          if (d.sliders && d.sliders.length > 0) {
+          if (Array.isArray(d.sliders) && d.sliders.length > 0) {
             saveSliders(d.sliders);
             setSliders(d.sliders);
             hasCloudData = true;
           }
-          if (d.bookings && d.bookings.length > 0) saveUmrahBookings(d.bookings);
-          if (d.visaBatches && d.visaBatches.length > 0) saveVisaBatches(d.visaBatches);
-          if (d.individualVisas && d.individualVisas.length > 0) saveIndividualVisas(d.individualVisas);
-          if (d.partnerPayments && d.partnerPayments.length > 0) savePartnerPayments(d.partnerPayments);
-          if (d.crmFollowUps && d.crmFollowUps.length > 0) saveFollowUps(d.crmFollowUps);
-          if (d.templates && d.templates.length > 0) saveMessageTemplates(d.templates);
-          if (d.logs && d.logs.length > 0) saveMessageLogs(d.logs);
+          if (Array.isArray(d.bookings) && d.bookings.length > 0) saveUmrahBookings(d.bookings);
+          if (Array.isArray(d.visaBatches) && d.visaBatches.length > 0) saveVisaBatches(d.visaBatches);
+          if (Array.isArray(d.individualVisas) && d.individualVisas.length > 0) saveIndividualVisas(d.individualVisas);
+          if (Array.isArray(d.partnerPayments) && d.partnerPayments.length > 0) savePartnerPayments(d.partnerPayments);
+          if (Array.isArray(d.crmFollowUps) && d.crmFollowUps.length > 0) saveFollowUps(d.crmFollowUps);
+          if (Array.isArray(d.templates) && d.templates.length > 0) saveMessageTemplates(d.templates);
+          if (Array.isArray(d.logs) && d.logs.length > 0) saveMessageLogs(d.logs);
           if (d.agencyInfo) saveAgencyInfo(d.agencyInfo);
 
           // If Supabase was clean/empty, auto-migrate existing local workspace records to Supabase without loss
@@ -308,10 +317,10 @@ export default function App() {
 
     loadCloudData();
 
-    // Subscribe to realtime multi-device events
+    // Subscribe to realtime multi-device events and pull fresh data instantly
     const unsubscribe = subscribeToSupabaseRealtime((event) => {
       console.log('Received Supabase sync broadcast:', event);
-      refreshAllState();
+      loadCloudData();
     });
 
     return () => {
@@ -762,6 +771,7 @@ export default function App() {
             {publicTab === 'jobs' && (
               <PublicJobs
                 jobs={jobs}
+                candidates={candidates}
                 onApplyJob={(job) => setSelectedJobForApply(job)}
                 onOpenPoster={(job) => setSelectedJobForPoster(job)}
                 agencyInfo={agencyInfo}

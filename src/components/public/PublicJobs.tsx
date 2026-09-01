@@ -17,7 +17,7 @@ import {
   Lock,
   Users
 } from 'lucide-react';
-import { JobVacancy, AgencyInfo } from '../../types';
+import { JobVacancy, Candidate, AgencyInfo } from '../../types';
 import { getJobs, getAgencyInfo, getCandidates } from '../../lib/storage';
 import { computeJobCandidateMetrics, enrichAllJobsWithMetrics } from '../../lib/jobCalculations';
 import { PublicApplyModal } from './PublicApplyModal';
@@ -25,6 +25,7 @@ import { PublicJobPosterModal } from './PublicJobPosterModal';
 
 interface PublicJobsProps {
   jobs?: JobVacancy[];
+  candidates?: Candidate[];
   agencyInfo?: AgencyInfo;
   onApplyJob?: (job: JobVacancy) => void;
   onOpenPoster?: (job: JobVacancy) => void;
@@ -33,6 +34,7 @@ interface PublicJobsProps {
 
 export const PublicJobs: React.FC<PublicJobsProps> = ({
   jobs: propJobs,
+  candidates: propCandidates,
   agencyInfo: propAgency,
   onApplyJob: propOnApplyJob,
   onOpenPoster: propOnOpenPoster,
@@ -47,7 +49,7 @@ export const PublicJobs: React.FC<PublicJobsProps> = ({
   const [isPosterOpen, setIsPosterOpen] = useState(false);
 
   const agency = propAgency || getAgencyInfo();
-  const candidates = getCandidates();
+  const candidates = propCandidates || getCandidates();
   const rawJobs = propJobs || getJobs();
   const jobs = enrichAllJobsWithMetrics(rawJobs, candidates);
 

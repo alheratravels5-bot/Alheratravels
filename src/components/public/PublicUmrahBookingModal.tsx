@@ -30,6 +30,9 @@ export const PublicUmrahBookingModal: React.FC<PublicUmrahBookingModalProps> = (
   const [preferredDate, setPreferredDate] = useState('');
   const [notes, setNotes] = useState('');
 
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submittedBookingCode, setSubmittedBookingCode] = useState('');
+
   if (!isOpen || !activePackage) return null;
 
   const agency = getAgencyInfo();
@@ -82,13 +85,41 @@ export const PublicUmrahBookingModal: React.FC<PublicUmrahBookingModalProps> = (
     
     logSentMessage(leadName, whatsapp || phone, 'whatsapp', msg, 'Umrah Booking Request', bookingCode);
 
+    setSubmittedBookingCode(bookingCode);
+    setIsSubmitted(true);
     if (onSuccess) {
       onSuccess(newBooking);
-    } else {
-      alert(`JazakAllah Khair ${leadName}! Your Umrah booking inquiry (${bookingCode}) has been registered.`);
     }
-    onClose();
   };
+
+  if (isSubmitted) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-6 text-center animate-fade-in text-slate-900">
+          <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <CheckCircle2 className="w-8 h-8" />
+          </div>
+          <h3 className="text-xl font-bold font-display text-slate-900 mb-2">JazakAllah Khair!</h3>
+          <p className="text-sm text-slate-600 mb-4">
+            Your Umrah inquiry for <strong>{activePackage.name}</strong> has been registered successfully.
+          </p>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-6">
+            <span className="text-xs text-slate-500 block uppercase font-bold tracking-wider">Booking Reference</span>
+            <span className="text-base font-black text-amber-600 font-mono">{submittedBookingCode}</span>
+          </div>
+          <button
+            onClick={() => {
+              setIsSubmitted(false);
+              onClose();
+            }}
+            className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl shadow-lg transition-all"
+          >
+            Close & Return
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm overflow-y-auto">

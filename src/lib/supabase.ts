@@ -40,7 +40,21 @@ export function getStoredSupabaseConfig(): SupabaseConfig {
     const data = localStorage.getItem(STORAGE_KEY_SUPABASE);
     if (data) {
       const parsed = JSON.parse(data);
-      return { ...DEFAULT_SUPABASE_CONFIG, ...parsed };
+      const url = parsed.url && typeof parsed.url === 'string' && parsed.url.trim().startsWith('http')
+        ? parsed.url.trim()
+        : DEFAULT_SUPABASE_CONFIG.url;
+      const anonKey = parsed.anonKey && typeof parsed.anonKey === 'string' && parsed.anonKey.trim().length > 20
+        ? parsed.anonKey.trim()
+        : DEFAULT_SUPABASE_CONFIG.anonKey;
+
+      return {
+        ...DEFAULT_SUPABASE_CONFIG,
+        ...parsed,
+        url,
+        anonKey,
+        isConnected: true,
+        autoSync: true,
+      };
     }
   } catch (e) {
     console.error('Error reading Supabase config from storage', e);
@@ -736,6 +750,180 @@ export async function pushAllToSupabase(data: {
 }
 
 /**
+ * Deduplicating merge helpers for cloud synchronization
+ */
+function mergeCandidates(storeList: Candidate[] = [], tableList: Candidate[] = []): Candidate[] {
+  const map = new Map<string, Candidate>();
+
+  for (const item of storeList) {
+    if (!item) continue;
+    const key = (item.trackingId || item.id || '').toUpperCase().trim();
+    if (key) map.set(key, item);
+  }
+
+  for (const item of tableList) {
+    if (!item) continue;
+    const key = (item.trackingId || item.id || '').toUpperCase().trim();
+    if (!key) continue;
+
+    if (!map.has(key)) {
+      map.set(key, item);
+    } else {
+      const existing = map.get(key)!;
+      // Merge records preserving richer detail (documents, payment history, status history)
+      const merged: Candidate = {
+        ...existing,
+        ...item,
+        statusHistory: (existing.statusHistory && existing.statusHistory.length > 0)
+          ? existing.statusHistory
+          : (item.statusHistory || []),
+        paymentHistory: (existing.paymentHistory && existing.paymentHistory.length > 0)
+          ? existing.paymentHistory
+          : (item.paymentHistory || []),
+        documents: (existing.documents && existing.documents.length > 0)
+          ? existing.documents
+          : (item.documents || []),
+        flightDetails: existing.flightDetails || item.flightDetails,
+      };
+      map.set(key, merged);
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function mergeJobs(storeList: JobVacancy[] = [], tableList: JobVacancy[] = []): JobVacancy[] {
+  const map = new Map<string, JobVacancy>();
+
+  for (const item of storeList) {
+    if (!item) continue;
+    const key = (item.jobCode || item.id || '').toUpperCase().trim();
+    if (key) map.set(key, item);
+  }
+
+  for (const item of tableList) {
+    if (!item) continue;
+    const key = (item.jobCode || item.id || '').toUpperCase().trim();
+    if (!key) continue;
+
+    if (!map.has(key)) {
+      map.set(key, item);
+    } else {
+      const existing = map.get(key)!;
+      map.set(key, {
+        ...existing,
+        ...item,
+        requirements: existing.requirements?.length ? existing.requirements : (item.requirements || []),
+        benefits: existing.benefits?.length ? existing.benefits : (item.benefits || []),
+        statusHistory: existing.statusHistory?.length ? existing.statusHistory : (item.statusHistory || []),
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function mergePackages(storeList: UmrahPackage[] = [], tableList: UmrahPackage[] = []): UmrahPackage[] {
+  const map = new Map<string, UmrahPackage>();
+
+  for (const item of storeList) {
+    if (!item) continue;
+    const key = (item.packageCode || item.id || item.name || '').toUpperCase().trim();
+    if (key) map.set(key, item);
+  }
+
+  for (const item of tableList) {
+    if (!item) continue;
+    const key = (item.packageCode || item.id || item.name || '').toUpperCase().trim();
+    if (!key) continue;
+
+    if (!map.has(key)) {
+      map.set(key, item);
+    } else {
+      const existing = map.get(key)!;
+      map.set(key, { ...existing, ...item });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function mergePartners(storeList: PartnerOffice[] = [], tableList: PartnerOffice[] = []): PartnerOffice[] {
+  const map = new Map<string, PartnerOffice>();
+
+  for (const item of storeList) {
+    if (!item) continue;
+    const key = (item.id || item.agencyName || '').toUpperCase().trim();
+    if (key) map.set(key, item);
+  }
+
+  for (const item of tableList) {
+    if (!item) continue;
+    const key = (item.id || item.agencyName || '').toUpperCase().trim();
+    if (!key) continue;
+
+    if (!map.has(key)) {
+      map.set(key, item);
+    } else {
+      const existing = map.get(key)!;
+      map.set(key, { ...existing, ...item });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function mergeBookings(storeList: UmrahBooking[] = [], tableList: UmrahBooking[] = []): UmrahBooking[] {
+  const map = new Map<string, UmrahBooking>();
+
+  for (const item of storeList) {
+    if (!item) continue;
+    const key = (item.bookingCode || item.id || '').toUpperCase().trim();
+    if (key) map.set(key, item);
+  }
+
+  for (const item of tableList) {
+    if (!item) continue;
+    const key = (item.bookingCode || item.id || '').toUpperCase().trim();
+    if (!key) continue;
+
+    if (!map.has(key)) {
+      map.set(key, item);
+    } else {
+      const existing = map.get(key)!;
+      map.set(key, { ...existing, ...item });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function mergeCrm(storeList: CrmFollowUp[] = [], tableList: CrmFollowUp[] = []): CrmFollowUp[] {
+  const map = new Map<string, CrmFollowUp>();
+
+  for (const item of storeList) {
+    if (!item) continue;
+    const key = (item.id || '').trim();
+    if (key) map.set(key, item);
+  }
+
+  for (const item of tableList) {
+    if (!item) continue;
+    const key = (item.id || '').trim();
+    if (!key) continue;
+
+    if (!map.has(key)) {
+      map.set(key, item);
+    } else {
+      const existing = map.get(key)!;
+      map.set(key, { ...existing, ...item });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+/**
  * Pull all data collections from Supabase
  */
 export async function pullAllFromSupabase(): Promise<{
@@ -764,164 +952,244 @@ export async function pullAllFromSupabase(): Promise<{
   }
 
   try {
-    // 1. Check central store first
-    const { data: storeRows } = await supabase.from('al_hera_sync_store').select('*');
-
-    if (storeRows && storeRows.length > 0) {
-      const getVal = (k: string) => storeRows.find((r) => r.key === k)?.data;
-
-      const candidates = getVal('candidates');
-      const jobs = getVal('jobs');
-      const packages = getVal('packages');
-      const bookings = getVal('bookings');
-      const partners = getVal('partners');
-      const visaBatches = getVal('visa_batches');
-      const individualVisas = getVal('individual_visas');
-      const partnerPayments = getVal('partner_payments');
-      const partnerLedger = getVal('partner_ledger');
-      const crmFollowUps = getVal('crm_followups');
-      const sliders = getVal('sliders');
-      const templates = getVal('templates');
-      const logs = getVal('logs');
-      const agencyInfo = getVal('agency_info');
-
-      const hasContent =
-        (Array.isArray(candidates) && candidates.length > 0) ||
-        (Array.isArray(jobs) && jobs.length > 0) ||
-        (Array.isArray(packages) && packages.length > 0) ||
-        (Array.isArray(partners) && partners.length > 0);
-
-      if (hasContent) {
-        return {
-          success: true,
-          message: 'Loaded full synchronized database from Supabase cloud store.',
-          data: {
-            candidates: Array.isArray(candidates) ? candidates : [],
-            jobs: Array.isArray(jobs) ? jobs : [],
-            packages: Array.isArray(packages) ? packages : [],
-            bookings: Array.isArray(bookings) ? bookings : [],
-            partners: Array.isArray(partners) ? partners : [],
-            visaBatches: Array.isArray(visaBatches) ? visaBatches : [],
-            individualVisas: Array.isArray(individualVisas) ? individualVisas : [],
-            partnerPayments: Array.isArray(partnerPayments) ? partnerPayments : [],
-            partnerLedger: Array.isArray(partnerLedger) ? partnerLedger : [],
-            crmFollowUps: Array.isArray(crmFollowUps) ? crmFollowUps : [],
-            sliders: Array.isArray(sliders) ? sliders : [],
-            templates: Array.isArray(templates) ? templates : [],
-            logs: Array.isArray(logs) ? logs : [],
-            agencyInfo: agencyInfo || undefined,
-          },
-        };
-      }
-    }
-
-    // 2. Query Relational PostgreSQL Tables directly
-    const [candRes, jobsRes, pkgsRes, partnersRes, crmRes] = await Promise.all([
+    // 1. Concurrently query central cloud store and relational PostgreSQL tables
+    const [storeRes, candRes, jobsRes, pkgsRes, partnersRes, crmRes, bookingsRes] = await Promise.allSettled([
+      supabase.from('al_hera_sync_store').select('*'),
       supabase.from('candidates').select('*').order('created_at', { ascending: false }),
       supabase.from('job_vacancies').select('*').order('created_at', { ascending: false }),
       supabase.from('umrah_packages').select('*'),
       supabase.from('partner_offices').select('*'),
       supabase.from('crm_follow_ups').select('*'),
+      supabase.from('umrah_bookings').select('*'),
     ]);
 
-    const candidates: Candidate[] = (candRes.data || []).map((r: any) => ({
-      id: r.id || 'cand-' + r.tracking_id,
-      trackingId: r.tracking_id,
-      fullName: r.full_name,
-      fatherName: r.father_name || '',
-      passportNumber: r.passport_number || '',
-      passportExpiry: r.passport_expiry || '',
-      dateOfBirth: r.date_of_birth || '',
-      gender: r.gender || 'Male',
-      nationality: r.nationality || 'Indian',
-      phoneNumber: r.phone_number || '',
-      whatsappNumber: r.whatsapp_number || r.phone_number || '',
-      email: r.email || '',
-      address: r.address || '',
-      city: r.city || '',
-      state: r.state || '',
-      trade: r.trade || 'General Worker',
-      experienceYears: Number(r.experience_years) || 0,
-      education: r.education || '',
-      jobId: r.job_id || '',
-      jobTitle: r.job_title || '',
-      sponsorName: r.sponsor_name || '',
-      visaCategory: r.visa_category || '',
-      visaNumber: r.visa_number || '',
-      mofaNumber: r.mofa_number || '',
-      idNumber: r.id_number || '',
-      wakalaNumber: r.wakala_number || '',
-      status: r.status || 'applied',
-      statusHistory: r.status_history || [],
-      flightDetails: r.flight_details || undefined,
-      partnerOfficeId: r.partner_agent_id || '',
-      partnerOfficeName: r.partner_agent_name || '',
-      packageFee: Number(r.package_fee) || 0,
-      totalPaid: Number(r.total_paid) || 0,
-      balanceDue: Number(r.balance_due) || 0,
-      paymentHistory: r.payment_history || [],
-      photoUrl: r.photo_url || '',
-      passportScanUrl: r.passport_scan_url || '',
-      medicalReportUrl: r.medical_report_url || '',
-      tradeCertificateUrl: r.trade_certificate_url || '',
-      cvUrl: r.cv_url || '',
-      remarks: r.remarks || '',
-      createdAt: r.created_at || new Date().toISOString(),
-      updatedAt: r.updated_at || new Date().toISOString(),
-    }));
+    const storeRows = (storeRes.status === 'fulfilled' && !storeRes.value.error && Array.isArray(storeRes.value.data))
+      ? storeRes.value.data
+      : [];
 
-    const jobs: JobVacancy[] = (jobsRes.data || []).map((r: any) => ({
-      id: r.id || 'job-' + r.job_code,
-      jobCode: r.job_code,
-      title: r.title,
-      country: r.country,
-      city: r.city,
-      category: r.category,
-      companyName: r.company_name,
-      openingsCount: Number(r.openings_count) || 1,
-      salaryMin: Number(r.salary_min) || 0,
-      salaryMax: Number(r.salary_max) || 0,
-      currency: r.currency || 'SAR',
-      dutyHours: r.duty_hours,
-      contractPeriod: r.contract_period,
-      ageLimit: r.age_limit,
-      experienceRequired: r.experience_required,
-      foodProvided: r.food_provided,
-      accommodationProvided: r.accommodation_provided,
-      transportProvided: r.transport_provided,
-      medicalInsurance: r.medical_insurance,
-      tradeTestRequired: r.trade_test_required,
-      interviewDate: r.interview_date,
-      interviewVenue: r.interview_venue,
-      description: r.description,
-      requirements: r.requirements || [],
-      benefits: r.benefits || [],
-      status: r.status || 'active',
-      posterTheme: r.poster_theme || 'navy_gold',
-      deadline: r.deadline,
-      createdAt: r.created_at,
-    }));
+    const getVal = (k: string) => storeRows.find((r: any) => r.key === k)?.data;
+
+    const storeCandidates: Candidate[] = Array.isArray(getVal('candidates')) ? getVal('candidates') : [];
+    const storeJobs: JobVacancy[] = Array.isArray(getVal('jobs')) ? getVal('jobs') : [];
+    const storePackages: UmrahPackage[] = Array.isArray(getVal('packages')) ? getVal('packages') : [];
+    const storeBookings: UmrahBooking[] = Array.isArray(getVal('bookings')) ? getVal('bookings') : [];
+    const storePartners: PartnerOffice[] = Array.isArray(getVal('partners')) ? getVal('partners') : [];
+    const storeVisaBatches: VisaBatch[] = Array.isArray(getVal('visa_batches')) ? getVal('visa_batches') : [];
+    const storeIndividualVisas: IndividualVisa[] = Array.isArray(getVal('individual_visas')) ? getVal('individual_visas') : [];
+    const storePartnerPayments: PartnerOfficePayment[] = Array.isArray(getVal('partner_payments')) ? getVal('partner_payments') : [];
+    const storePartnerLedger: PartnerOfficeLedgerEntry[] = Array.isArray(getVal('partner_ledger')) ? getVal('partner_ledger') : [];
+    const storeCrmFollowUps: CrmFollowUp[] = Array.isArray(getVal('crm_followups')) ? getVal('crm_followups') : [];
+    const storeSliders: SliderBanner[] = Array.isArray(getVal('sliders')) ? getVal('sliders') : [];
+    const storeTemplates: MessageTemplate[] = Array.isArray(getVal('templates')) ? getVal('templates') : [];
+    const storeLogs: MessageLog[] = Array.isArray(getVal('logs')) ? getVal('logs') : [];
+    const storeAgencyInfo: AgencyInfo | undefined = getVal('agency_info') || undefined;
+
+    // 2. Map relational PostgreSQL tables
+    const tableCandidates: Candidate[] = (candRes.status === 'fulfilled' && !candRes.value.error && Array.isArray(candRes.value.data))
+      ? candRes.value.data.map((r: any) => ({
+          id: r.id || 'cand-' + r.tracking_id,
+          trackingId: r.tracking_id,
+          fullName: r.full_name,
+          fatherName: r.father_name || '',
+          passportNumber: r.passport_number || '',
+          passportExpiry: r.passport_expiry || '',
+          dateOfBirth: r.date_of_birth || '',
+          gender: r.gender || 'Male',
+          nationality: r.nationality || 'Indian',
+          phoneNumber: r.phone_number || '',
+          whatsappNumber: r.whatsapp_number || r.phone_number || '',
+          email: r.email || '',
+          address: r.address || '',
+          city: r.city || '',
+          state: r.state || '',
+          trade: r.trade || 'General Worker',
+          experienceYears: Number(r.experience_years) || 0,
+          education: r.education || '',
+          jobId: r.job_id || '',
+          jobTitle: r.job_title || '',
+          sponsorName: r.sponsor_name || '',
+          visaCategory: r.visa_category || '',
+          visaNumber: r.visa_number || '',
+          mofaNumber: r.mofa_number || '',
+          idNumber: r.id_number || '',
+          wakalaNumber: r.wakala_number || '',
+          status: r.status || 'applied',
+          statusHistory: Array.isArray(r.status_history) ? r.status_history : [],
+          flightDetails: r.flight_details || undefined,
+          partnerOfficeId: r.partner_agent_id || '',
+          partnerOfficeName: r.partner_agent_name || '',
+          packageFee: Number(r.package_fee) || 0,
+          totalPaid: Number(r.total_paid) || 0,
+          balanceDue: Number(r.balance_due) || 0,
+          paymentHistory: Array.isArray(r.payment_history) ? r.payment_history : [],
+          photoUrl: r.photo_url || '',
+          passportScanUrl: r.passport_scan_url || '',
+          medicalReportUrl: r.medical_report_url || '',
+          tradeCertificateUrl: r.trade_certificate_url || '',
+          cvUrl: r.cv_url || '',
+          remarks: r.remarks || '',
+          createdAt: r.created_at || new Date().toISOString(),
+          updatedAt: r.updated_at || new Date().toISOString(),
+        }))
+      : [];
+
+    const tableJobs: JobVacancy[] = (jobsRes.status === 'fulfilled' && !jobsRes.value.error && Array.isArray(jobsRes.value.data))
+      ? jobsRes.value.data.map((r: any) => ({
+          id: r.id || 'job-' + r.job_code,
+          jobCode: r.job_code,
+          title: r.title,
+          country: r.country || 'Saudi Arabia',
+          city: r.city || '',
+          category: r.category || 'General',
+          companyName: r.company_name || 'Al-Hera Client',
+          openingsCount: Number(r.openings_count) || 1,
+          salaryMin: Number(r.salary_min) || 0,
+          salaryMax: Number(r.salary_max) || 0,
+          currency: r.currency || 'SAR',
+          dutyHours: r.duty_hours || '8 Hours + OT',
+          contractPeriod: r.contract_period || '2 Years',
+          ageLimit: r.age_limit || '21-40 Years',
+          experienceRequired: r.experience_required || '',
+          foodProvided: !!r.food_provided,
+          accommodationProvided: !!r.accommodation_provided,
+          transportProvided: !!r.transport_provided,
+          medicalInsurance: !!r.medical_insurance,
+          tradeTestRequired: !!r.trade_test_required,
+          interviewDate: r.interview_date || '',
+          interviewVenue: r.interview_venue || '',
+          description: r.description || '',
+          requirements: Array.isArray(r.requirements) ? r.requirements : [],
+          benefits: Array.isArray(r.benefits) ? r.benefits : [],
+          status: r.status || 'active',
+          posterTheme: r.poster_theme || 'navy_gold',
+          deadline: r.deadline || '',
+          createdAt: r.created_at || new Date().toISOString(),
+        }))
+      : [];
+
+    const tablePackages: UmrahPackage[] = (pkgsRes.status === 'fulfilled' && !pkgsRes.value.error && Array.isArray(pkgsRes.value.data))
+      ? pkgsRes.value.data.map((p: any) => ({
+          id: p.id || 'pkg-' + (p.package_code || p.id),
+          packageCode: p.package_code,
+          name: p.name,
+          durationDays: Number(p.duration_days) || 15,
+          packageType: p.package_type || 'Economy',
+          makkahHotel: p.makkah_hotel || 'Hotel Near Haram',
+          makkahDistance: p.makkah_distance || '500m from Haram',
+          madinahHotel: p.madinah_hotel || 'Hotel Near Nabawi',
+          madinahDistance: p.madinah_distance || '300m from Nabawi',
+          airline: p.airline || 'Saudia Airlines / Flynas',
+          pricing: p.pricing || { quadSharing: 85000, tripleSharing: 95000, doubleSharing: 110000, singleSharing: 140000 },
+          departureDates: Array.isArray(p.departure_dates) ? p.departure_dates : [],
+          inclusions: Array.isArray(p.inclusions) ? p.inclusions : [],
+          exclusions: Array.isArray(p.exclusions) ? p.exclusions : [],
+          itinerary: Array.isArray(p.itinerary) ? p.itinerary : [],
+          imageUrl: p.image_url || 'https://images.unsplash.com/photo-1591604129939-f1efa4d9f7fa?q=80&w=1000&auto=format&fit=crop',
+          badge: p.badge || '',
+          isActive: p.is_active !== false,
+        }))
+      : [];
+
+    const tablePartners: PartnerOffice[] = (partnersRes.status === 'fulfilled' && !partnersRes.value.error && Array.isArray(partnersRes.value.data))
+      ? partnersRes.value.data.map((pt: any) => ({
+          id: pt.id || 'pt-' + Date.now(),
+          agencyName: pt.agency_name,
+          contactPerson: pt.contact_person || '',
+          city: pt.city || '',
+          state: pt.state || '',
+          country: pt.country || 'India',
+          phone: pt.phone || '',
+          whatsapp: pt.whatsapp || pt.phone || '',
+          email: pt.email || '',
+          defaultCommissionPerCandidate: Number(pt.default_commission_per_candidate) || 5000,
+          totalCandidatesReferred: Number(pt.total_candidates_referred) || 0,
+          totalCommissionEarned: Number(pt.total_commission_earned) || 0,
+          totalCommissionPaid: Number(pt.total_commission_paid) || 0,
+          balancePending: Number(pt.balance_pending) || 0,
+          status: pt.status || 'active',
+          notes: pt.notes || '',
+          createdAt: pt.created_at || new Date().toISOString(),
+        }))
+      : [];
+
+    const tableBookings: UmrahBooking[] = (bookingsRes.status === 'fulfilled' && !bookingsRes.value.error && Array.isArray(bookingsRes.value.data))
+      ? bookingsRes.value.data.map((b: any) => ({
+          id: b.id || 'ub-' + (b.booking_code || b.id),
+          bookingCode: b.booking_code,
+          packageId: b.package_id,
+          packageName: b.package_name,
+          leadPilgrimName: b.lead_pilgrim_name,
+          contactPhone: b.contact_phone,
+          whatsappNumber: b.whatsapp_number || b.contact_phone,
+          email: b.email || '',
+          totalPilgrims: Number(b.total_pilgrims) || 1,
+          pilgrims: Array.isArray(b.pilgrims) ? b.pilgrims : [],
+          preferredTravelDate: b.preferred_travel_date || '',
+          roomSharing: b.room_sharing || 'Quad',
+          totalAmount: Number(b.total_amount) || 0,
+          paidAmount: Number(b.paid_amount) || 0,
+          status: b.status || 'inquiry',
+          notes: b.notes || '',
+          createdAt: b.created_at || new Date().toISOString(),
+        }))
+      : [];
+
+    const tableCrm: CrmFollowUp[] = (crmRes.status === 'fulfilled' && !crmRes.value.error && Array.isArray(crmRes.value.data))
+      ? crmRes.value.data.map((f: any) => ({
+          id: f.id || 'crm-' + Date.now(),
+          leadType: f.lead_type || 'candidate',
+          leadSource: f.lead_source || 'website',
+          contactName: f.contact_name,
+          phone: f.phone || '',
+          whatsapp: f.whatsapp || f.phone || '',
+          email: f.email || '',
+          targetRequirement: f.target_requirement || '',
+          candidateId: f.candidate_id,
+          passportNumber: f.passport_number,
+          priority: f.priority || 'medium',
+          status: f.status || 'pending',
+          channel: f.channel || 'phone',
+          scheduledDate: f.scheduled_date || '',
+          scheduledTime: f.scheduled_time || '',
+          assignedStaffName: f.assigned_staff_name || '',
+          notes: f.notes || '',
+          outcome: f.outcome || '',
+          history: Array.isArray(f.history) ? f.history : [],
+          createdAt: f.created_at || new Date().toISOString(),
+          updatedAt: f.updated_at || new Date().toISOString(),
+        }))
+      : [];
+
+    // Intelligent deduplicating merges
+    const mergedCandidates = mergeCandidates(storeCandidates, tableCandidates);
+    const mergedJobs = mergeJobs(storeJobs, tableJobs);
+    const mergedPackages = mergePackages(storePackages, tablePackages);
+    const mergedPartners = mergePartners(storePartners, tablePartners);
+    const mergedBookings = mergeBookings(storeBookings, tableBookings);
+    const mergedCrm = mergeCrm(storeCrmFollowUps, tableCrm);
 
     return {
       success: true,
-      message: `Retrieved ${candidates.length} candidates and ${jobs.length} jobs from Supabase tables.`,
+      message: `Retrieved live database from Supabase (${mergedCandidates.length} candidates, ${mergedJobs.length} jobs, ${mergedPackages.length} packages).`,
       data: {
-        candidates,
-        jobs,
-        packages: (pkgsRes.data as any) || [],
-        bookings: [],
-        partners: (partnersRes.data as any) || [],
-        visaBatches: [],
-        individualVisas: [],
-        partnerPayments: [],
-        partnerLedger: [],
-        crmFollowUps: (crmRes.data as any) || [],
-        sliders: [],
-        templates: [],
-        logs: [],
+        candidates: mergedCandidates,
+        jobs: mergedJobs,
+        packages: mergedPackages,
+        bookings: mergedBookings,
+        partners: mergedPartners,
+        visaBatches: storeVisaBatches,
+        individualVisas: storeIndividualVisas,
+        partnerPayments: storePartnerPayments,
+        partnerLedger: storePartnerLedger,
+        crmFollowUps: mergedCrm,
+        sliders: storeSliders,
+        templates: storeTemplates,
+        logs: storeLogs,
+        agencyInfo: storeAgencyInfo,
       },
     };
   } catch (err: any) {
+    console.error('Error pulling data from Supabase:', err);
     return {
       success: false,
       message: err?.message || 'Error pulling data from Supabase.',
