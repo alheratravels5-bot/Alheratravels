@@ -83,7 +83,8 @@ import {
   saveMessageTemplates,
   getMessageLogs,
   saveMessageLogs,
-  saveAgencyInfo
+  saveAgencyInfo,
+  savePartnerLedgerEntries
 } from './lib/storage';
 
 // Public Components
@@ -280,6 +281,7 @@ export default function App() {
           if (Array.isArray(d.visaBatches) && d.visaBatches.length > 0) saveVisaBatches(d.visaBatches, false);
           if (Array.isArray(d.individualVisas) && d.individualVisas.length > 0) saveIndividualVisas(d.individualVisas, false);
           if (Array.isArray(d.partnerPayments) && d.partnerPayments.length > 0) savePartnerPayments(d.partnerPayments, false);
+          if (Array.isArray(d.partnerLedger) && d.partnerLedger.length > 0) savePartnerLedgerEntries(d.partnerLedger, false);
           if (Array.isArray(d.crmFollowUps) && d.crmFollowUps.length > 0) saveFollowUps(d.crmFollowUps, false);
           if (Array.isArray(d.templates) && d.templates.length > 0) saveMessageTemplates(d.templates, false);
           if (Array.isArray(d.logs) && d.logs.length > 0) saveMessageLogs(d.logs, false);

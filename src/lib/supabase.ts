@@ -22,12 +22,12 @@ const STORAGE_KEY_SUPABASE = 'al_hera_supabase_config';
 const env = (import.meta as any).env || {};
 
 // Production Supabase Project Config (alheratravels live project)
-const PROD_SUPABASE_URL = 'https://cghzoyuzvhybdvipuwtb.supabase.co';
-const PROD_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNnaHpveXV6dmh5YmR2aXB1d3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgxNjk4NjksImV4cCI6MjEwMzc0NTg2OX0.aLyS7DCemOSQlvtiHQHZj1rP87ylYpt7av3UKH5B3x0';
+export const PROD_SUPABASE_URL = 'https://cghzoyuzvhybdvipuwtb.supabase.co';
+export const PROD_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNnaHpveXV6dmh5YmR2aXB1d3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgxNjk4NjksImV4cCI6MjEwMzc0NTg2OX0.aLyS7DCemOSQlvtiHQHZj1rP87ylYpt7av3UKH5B3x0';
 
 export const DEFAULT_SUPABASE_CONFIG: SupabaseConfig = {
-  url: env.VITE_SUPABASE_URL || PROD_SUPABASE_URL,
-  anonKey: env.VITE_SUPABASE_ANON_KEY || PROD_SUPABASE_ANON_KEY,
+  url: ((import.meta as any)?.env?.VITE_SUPABASE_URL) || PROD_SUPABASE_URL,
+  anonKey: ((import.meta as any)?.env?.VITE_SUPABASE_ANON_KEY) || PROD_SUPABASE_ANON_KEY,
   isConnected: true,
   autoSync: true,
 };
@@ -40,10 +40,9 @@ export function getStoredSupabaseConfig(): SupabaseConfig {
     const data = localStorage.getItem(STORAGE_KEY_SUPABASE);
     if (data) {
       const parsed = JSON.parse(data);
-      const url = parsed.url && typeof parsed.url === 'string' && parsed.url.trim().startsWith('http')
-        ? parsed.url.trim()
-        : DEFAULT_SUPABASE_CONFIG.url;
-      const anonKey = parsed.anonKey && typeof parsed.anonKey === 'string' && parsed.anonKey.trim().length > 20
+      const hasValidCustomUrl = parsed.url && typeof parsed.url === 'string' && parsed.url.trim().startsWith('https://') && parsed.url.includes('.supabase.co');
+      const url = hasValidCustomUrl ? parsed.url.trim() : DEFAULT_SUPABASE_CONFIG.url;
+      const anonKey = parsed.anonKey && typeof parsed.anonKey === 'string' && parsed.anonKey.trim().length > 30
         ? parsed.anonKey.trim()
         : DEFAULT_SUPABASE_CONFIG.anonKey;
 
@@ -697,7 +696,62 @@ export async function pushAllToSupabase(data: {
       }
     }
 
-    // 5. CRM follow-ups
+    // 5. Umrah Bookings
+    if (data.bookings && data.bookings.length > 0) {
+      const formattedBookings = data.bookings.map((b) => ({
+        booking_code: b.bookingCode,
+        package_id: b.packageId,
+        package_name: b.packageName,
+        lead_pilgrim_name: b.leadPilgrimName,
+        contact_phone: b.contactPhone,
+        whatsapp_number: b.whatsappNumber || b.contactPhone,
+        email: b.email || '',
+        total_pilgrims: Number(b.totalPilgrims) || 1,
+        pilgrims: b.pilgrims || [],
+        preferred_travel_date: b.preferredTravelDate || null,
+        room_sharing: b.roomSharing || 'Quad',
+        total_amount: Number(b.totalAmount) || 0,
+        paid_amount: Number(b.paidAmount) || 0,
+        status: b.status || 'inquiry',
+        notes: b.notes || '',
+      }));
+      try {
+        await supabase.from('umrah_bookings').upsert(formattedBookings, { onConflict: 'booking_code' });
+        syncedCount += data.bookings.length;
+      } catch (err) {
+        console.warn('Bookings table push notice:', err);
+      }
+    }
+
+    // 6. Partner Offices
+    if (data.partners && data.partners.length > 0) {
+      const formattedPartners = data.partners.map((pt) => ({
+        id: pt.id,
+        agency_name: pt.agencyName,
+        contact_person: pt.contactPerson,
+        city: pt.city,
+        state: pt.state,
+        country: pt.country || 'India',
+        phone: pt.phone,
+        whatsapp: pt.whatsapp,
+        email: pt.email || '',
+        default_commission_per_candidate: Number(pt.defaultCommissionPerCandidate) || 5000,
+        total_candidates_referred: Number(pt.totalCandidatesReferred) || 0,
+        total_commission_earned: Number(pt.totalCommissionEarned) || 0,
+        total_commission_paid: Number(pt.totalCommissionPaid) || 0,
+        balance_pending: Number(pt.balancePending) || 0,
+        status: pt.status || 'active',
+        notes: pt.notes || '',
+      }));
+      try {
+        await supabase.from('partner_offices').upsert(formattedPartners, { onConflict: 'id' });
+        syncedCount += data.partners.length;
+      } catch (err) {
+        console.warn('Partners table push notice:', err);
+      }
+    }
+
+    // 7. CRM follow-ups
     if (data.crmFollowUps && data.crmFollowUps.length > 0) {
       try {
         await supabase.from('crm_follow_ups').upsert(
