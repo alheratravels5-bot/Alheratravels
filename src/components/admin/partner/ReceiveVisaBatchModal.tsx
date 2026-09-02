@@ -348,10 +348,10 @@ export const ReceiveVisaBatchModal: React.FC<ReceiveVisaBatchModalProps> = ({
               <input
                 type="number"
                 min="0"
-                step="500"
+                step="any"
                 required
                 value={amountPerVisa}
-                onChange={(e) => setAmountPerVisa(Math.max(0, parseInt(e.target.value) || 0))}
+                onChange={(e) => setAmountPerVisa(Math.max(0, parseFloat(e.target.value) || 0))}
                 className="w-full text-xs font-bold text-emerald-800 border border-slate-300 rounded-xl p-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none"
               />
             </div>

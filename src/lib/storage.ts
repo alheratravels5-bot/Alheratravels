@@ -2302,7 +2302,7 @@ export const addVisaBatchWithIndividualVisas = (
 };
 
 /**
- * Assign an available Visa to a Candidate
+ * Assign an available Visa to a Candidate from Partner Office, with automatic Job Vacancy count deduction
  */
 export const linkVisaToCandidate = (
   visaId: string,
@@ -2310,11 +2310,13 @@ export const linkVisaToCandidate = (
   candidatePackageFee: number,
   alHeraCommission: number,
   partnerPayableAmount: number,
-  user: string = 'Administrator'
-): { success: boolean; message: string } => {
+  user: string = 'Administrator',
+  selectedJobId?: string
+): { success: boolean; message: string; updatedJob?: JobVacancy | null } => {
   const allVisas = getIndividualVisas();
   const allBatches = getVisaBatches();
   const allCandidates = getCandidates();
+  const allJobs = getJobs();
   const allLedger = getPartnerLedgerEntries();
 
   const visaIndex = allVisas.findIndex((v) => v.id === visaId || v.visaId === visaId);
@@ -2334,6 +2336,24 @@ export const linkVisaToCandidate = (
 
   const targetCandidate = allCandidates[candIndex];
 
+  // Match or find associated Job Vacancy
+  let targetJob = selectedJobId ? allJobs.find((j) => j.id === selectedJobId || j.jobCode === selectedJobId) : null;
+  if (!targetJob && targetCandidate.jobId) {
+    targetJob = allJobs.find((j) => j.id === targetCandidate.jobId || j.jobCode === targetCandidate.jobId);
+  }
+  if (!targetJob && (targetVisa.jobTitle || targetCandidate.trade)) {
+    const tradeQuery = (targetVisa.jobTitle || targetCandidate.trade || '').trim().toLowerCase();
+    targetJob = allJobs.find((j) => {
+      const jTitle = (j.title || '').trim().toLowerCase();
+      return (
+        jTitle === tradeQuery ||
+        jTitle.includes(tradeQuery) ||
+        tradeQuery.includes(jTitle) ||
+        (j.partnerOfficeId && j.partnerOfficeId === targetVisa.partnerOfficeId)
+      );
+    }) || null;
+  }
+
   // Update Visa
   const updatedVisa: IndividualVisa = {
     ...targetVisa,
@@ -2352,9 +2372,11 @@ export const linkVisaToCandidate = (
   const updatedVisas = [...allVisas];
   updatedVisas[visaIndex] = updatedVisa;
 
-  // Update Candidate
+  // Update Candidate with visa link, job connection, and advanced status
   const updatedCandidate: Candidate = {
     ...targetCandidate,
+    jobId: targetJob?.id || targetCandidate.jobId || (targetJob?.jobCode),
+    jobTitle: targetJob?.title || targetVisa.jobTitle || targetCandidate.jobTitle || targetCandidate.trade,
     partnerOfficeId: updatedVisa.partnerOfficeId,
     partnerOfficeName: updatedVisa.partnerOfficeName,
     partnerAgentId: updatedVisa.partnerOfficeId,
@@ -2367,6 +2389,7 @@ export const linkVisaToCandidate = (
     partnerCommission: alHeraCommission,
     packageFee: candidatePackageFee || targetCandidate.packageFee,
     balanceDue: (candidatePackageFee || targetCandidate.packageFee) - targetCandidate.totalPaid,
+    status: targetCandidate.status === 'applied' ? 'interview_selected' : targetCandidate.status,
     updatedAt: new Date().toISOString(),
   };
 
@@ -2376,7 +2399,7 @@ export const linkVisaToCandidate = (
   // Update Batch statistics
   const updatedBatches = allBatches.map((b) => {
     if (b.id === updatedVisa.batchId || b.batchId === updatedVisa.batchCode) {
-      const used = (allVisas.filter((v) => (v.batchId === b.id || v.batchCode === b.batchId) && (v.id === updatedVisa.id || v.candidateId)).length);
+      const used = (updatedVisas.filter((v) => (v.batchId === b.id || v.batchCode === b.batchId) && v.candidateId).length);
       const remaining = Math.max(0, b.totalVisas - used);
       return {
         ...b,
@@ -2390,6 +2413,9 @@ export const linkVisaToCandidate = (
     return b;
   });
 
+  // Calculate & Synchronize Updated Job Metrics (automatically reduces available visa count by 1)
+  const updatedJobs = enrichAllJobsWithMetrics(allJobs, updatedCandidates);
+
   // Record Ledger Transaction
   const year = new Date().getFullYear();
   const ledgerTx: PartnerOfficeLedgerEntry = {
@@ -2401,7 +2427,7 @@ export const linkVisaToCandidate = (
     visaId: updatedVisa.visaId,
     candidateId: updatedCandidate.trackingId,
     candidateName: updatedCandidate.fullName,
-    description: `Candidate ${updatedCandidate.fullName} (${updatedCandidate.trackingId}) linked to Visa ${updatedVisa.visaId}`,
+    description: `Candidate ${updatedCandidate.fullName} (${updatedCandidate.trackingId}) linked to Visa ${updatedVisa.visaId}${targetJob ? ` for Job ${targetJob.jobCode} (${targetJob.title})` : ''}`,
     debit: 0,
     credit: partnerPayableAmount,
     commission: alHeraCommission,
@@ -2414,16 +2440,143 @@ export const linkVisaToCandidate = (
   saveIndividualVisas(updatedVisas);
   saveCandidates(updatedCandidates);
   saveVisaBatches(updatedBatches);
+  saveJobs(updatedJobs);
   savePartnerLedgerEntries([...allLedger, ledgerTx]);
   addAuditLog(
     updatedVisa.partnerOfficeId,
     updatedVisa.partnerOfficeName,
     'Candidate Assigned to Visa',
-    `Linked ${updatedCandidate.fullName} (${updatedCandidate.trackingId}) to Visa ${updatedVisa.visaId}`,
+    `Linked ${updatedCandidate.fullName} (${updatedCandidate.trackingId}) to Visa ${updatedVisa.visaId}${targetJob ? ` [Job: ${targetJob.title}]` : ''}`,
     user
   );
 
-  return { success: true, message: `Successfully assigned Visa ${updatedVisa.visaId} to ${updatedCandidate.fullName}.` };
+  return {
+    success: true,
+    message: `Successfully assigned Visa ${updatedVisa.visaId} to ${updatedCandidate.fullName}. Job available count updated.`,
+    updatedJob: targetJob ? updatedJobs.find((j) => j.id === targetJob?.id) || targetJob : null,
+  };
+};
+
+/**
+ * Unassign a Candidate from a Visa, restoring available quota on the Job and Batch
+ */
+export const unlinkVisaFromCandidate = (
+  visaId: string,
+  user: string = 'Administrator'
+): { success: boolean; message: string } => {
+  const allVisas = getIndividualVisas();
+  const allBatches = getVisaBatches();
+  const allCandidates = getCandidates();
+  const allJobs = getJobs();
+  const allLedger = getPartnerLedgerEntries();
+
+  const visaIndex = allVisas.findIndex((v) => v.id === visaId || v.visaId === visaId);
+  if (visaIndex === -1) {
+    return { success: false, message: 'Visa record not found.' };
+  }
+
+  const targetVisa = allVisas[visaIndex];
+  const assignedCandidateId = targetVisa.candidateId;
+
+  // 1. Reset Visa record
+  const updatedVisa: IndividualVisa = {
+    ...targetVisa,
+    candidateId: undefined,
+    candidateTrackingId: undefined,
+    candidateName: undefined,
+    candidatePassport: undefined,
+    candidateAmount: 0,
+    alHeraCommission: 0,
+    partnerPayableAmount: 0,
+    visaStatus: 'Available',
+    dateAssigned: undefined,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const updatedVisas = [...allVisas];
+  updatedVisas[visaIndex] = updatedVisa;
+
+  // 2. Update Candidate record if linked
+  let updatedCandidates = [...allCandidates];
+  let candName = targetVisa.candidateName || 'Candidate';
+  let candTracking = targetVisa.candidateTrackingId || '';
+
+  if (assignedCandidateId) {
+    const candIndex = allCandidates.findIndex(
+      (c) => c.id === assignedCandidateId || (targetVisa.candidateTrackingId && c.trackingId === targetVisa.candidateTrackingId)
+    );
+    if (candIndex !== -1) {
+      const cand = allCandidates[candIndex];
+      candName = cand.fullName;
+      candTracking = cand.trackingId;
+      updatedCandidates[candIndex] = {
+        ...cand,
+        visaId: undefined,
+        visaBatchId: undefined,
+        visaAmount: 0,
+        alHeraCommission: 0,
+        partnerPayableAmount: 0,
+        balanceDue: Number(cand.packageFee || 0) - Number(cand.totalPaid || 0),
+        updatedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  // 3. Update Batch stats
+  const updatedBatches = allBatches.map((b) => {
+    if (b.id === updatedVisa.batchId || b.batchId === updatedVisa.batchCode) {
+      const used = updatedVisas.filter((v) => (v.batchId === b.id || v.batchCode === b.batchId) && v.candidateId).length;
+      const remaining = Math.max(0, b.totalVisas - used);
+      return {
+        ...b,
+        usedVisas: used,
+        remainingVisas: remaining,
+        usedVisaValue: used * b.amountPerVisa,
+        remainingVisaValue: remaining * b.amountPerVisa,
+        status: (remaining === 0 ? 'Fully Used' : used > 0 ? 'Partially Used' : 'Available') as any,
+      };
+    }
+    return b;
+  });
+
+  // 4. Update and synchronize Jobs (automatically restores available count by 1)
+  const updatedJobs = enrichAllJobsWithMetrics(allJobs, updatedCandidates);
+
+  // 5. Add Ledger reversal entry if applicable
+  const year = new Date().getFullYear();
+  const ledgerTx: PartnerOfficeLedgerEntry = {
+    id: 'tx-' + Date.now(),
+    transactionId: `TXN-${year}-${(allLedger.length + 1).toString().padStart(3, '0')}`,
+    partnerOfficeId: updatedVisa.partnerOfficeId,
+    date: new Date().toISOString().split('T')[0],
+    type: 'Adjustment',
+    visaId: updatedVisa.visaId,
+    candidateId: candTracking,
+    candidateName: candName,
+    description: `Candidate ${candName} (${candTracking}) unassigned from Visa ${updatedVisa.visaId}. Visa restored to available inventory.`,
+    debit: targetVisa.partnerPayableAmount || 0,
+    credit: 0,
+    commission: -(targetVisa.alHeraCommission || 0),
+    payment: 0,
+    balance: 0,
+    notes: `Visa ${updatedVisa.visaId} restored to available stock`,
+    createdAt: new Date().toISOString(),
+  };
+
+  saveIndividualVisas(updatedVisas);
+  saveCandidates(updatedCandidates);
+  saveVisaBatches(updatedBatches);
+  saveJobs(updatedJobs);
+  savePartnerLedgerEntries([...allLedger, ledgerTx]);
+  addAuditLog(
+    updatedVisa.partnerOfficeId,
+    updatedVisa.partnerOfficeName,
+    'Candidate Unassigned from Visa',
+    `Unlinked ${candName} (${candTracking}) from Visa ${updatedVisa.visaId}. Job and Visa counts restored.`,
+    user
+  );
+
+  return { success: true, message: `Successfully unassigned Visa ${updatedVisa.visaId}. Available quota restored.` };
 };
 
 /**

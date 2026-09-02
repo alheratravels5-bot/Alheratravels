@@ -40,7 +40,9 @@ import {
   pullAllFromSupabase,
   pushAllToSupabase,
   deleteRecordFromSupabase,
-  signOutFromSupabaseAuth
+  signOutFromSupabaseAuth,
+  insertCandidateDirectToSupabase,
+  fetchCandidatesDirectFromSupabase
 } from './lib/supabase';
 
 // Types
@@ -352,22 +354,21 @@ export default function App() {
     savePartners(updatedPartners);
   };
 
-  // Candidate Operations
-  const handleCreateOrUpdateCandidate = (candidateData: Partial<Candidate>) => {
-    let updated: Candidate[];
+  // Candidate Operations: Direct Supabase Save & Cloud Refresh
+  const handleCreateOrUpdateCandidate = async (candidateData: Partial<Candidate>) => {
+    let candToSave: Candidate;
     if (candidateToEdit) {
-      const updatedCand: Candidate = {
+      candToSave = {
         ...candidateToEdit,
         ...candidateData,
         trackingId: candidateData.trackingId || candidateToEdit.trackingId || `AHT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
         updatedAt: new Date().toISOString(),
       };
-      updated = candidates.map((c) => (c.id === candidateToEdit.id ? updatedCand : c));
-      showToast(`Updated particulars for ${updatedCand.fullName}`);
+      showToast(`Saving candidate ${candToSave.fullName} to Supabase...`);
     } else {
       const year = new Date().getFullYear();
       const trackingId = candidateData.trackingId || `AHT-${year}-${Math.floor(1000 + Math.random() * 9000)}`;
-      const newCand: Candidate = {
+      candToSave = {
         id: candidateData.id || 'cand-' + Date.now(),
         trackingId: trackingId.toUpperCase(),
         fullName: candidateData.fullName || 'Candidate',
@@ -413,10 +414,35 @@ export default function App() {
         createdAt: candidateData.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      updated = [newCand, ...candidates];
-      showToast(`Candidate registered! Tracking ID: ${newCand.trackingId}`);
+      showToast(`Registering candidate ${candToSave.fullName} to Supabase...`);
     }
-    handleSaveCandidates(updated);
+
+    // 1. Insert directly to connected Supabase public.candidates table
+    const directResult = await insertCandidateDirectToSupabase(candToSave);
+
+    if (directResult.success && directResult.candidate) {
+      // 2. Fetch freshly refreshed candidates from Supabase
+      const cloudResult = await fetchCandidatesDirectFromSupabase();
+      if (cloudResult.success && cloudResult.candidates && cloudResult.candidates.length > 0) {
+        setCandidates(cloudResult.candidates);
+        saveCandidates(cloudResult.candidates);
+      } else {
+        const localList = candidateToEdit
+          ? candidates.map((c) => (c.id === candToSave.id ? directResult.candidate! : c))
+          : [directResult.candidate!, ...candidates.filter((c) => c.id !== directResult.candidate!.id)];
+        setCandidates(localList);
+        saveCandidates(localList);
+      }
+      showToast(`✓ Candidate saved to Supabase! Tracking ID: ${candToSave.trackingId}`);
+    } else {
+      // Fallback local update if network issue
+      const localList = candidateToEdit
+        ? candidates.map((c) => (c.id === candToSave.id ? candToSave : c))
+        : [candToSave, ...candidates];
+      handleSaveCandidates(localList);
+      showToast(`Candidate registered! Tracking ID: ${candToSave.trackingId}`);
+    }
+
     setIsCandidateFormOpen(false);
     setCandidateToEdit(null);
   };

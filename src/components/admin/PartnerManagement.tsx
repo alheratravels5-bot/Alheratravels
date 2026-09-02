@@ -650,13 +650,18 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
       <RecordPartnerPaymentModal
         isOpen={isRecordPaymentOpen}
         onClose={() => setIsRecordPaymentOpen(false)}
-        partner={null}
+        partner={selectedPartnerId ? partners.find((p) => p.id === selectedPartnerId) || null : null}
         allPartners={partners}
         batches={visaBatches}
         visas={individualVisas}
         candidates={candidates}
-        onPaymentRecorded={() => {
+        onPaymentRecorded={(payment) => {
           loadData();
+          const refreshed = getPartners();
+          const updated = refreshed.find((p) => p.id === payment.partnerOfficeId);
+          if (updated) {
+            onSavePartner(updated);
+          }
         }}
       />
 
@@ -778,7 +783,7 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
                 <input
                   type="number"
                   min="0"
-                  step="500"
+                  step="any"
                   value={commissionRate}
                   onChange={(e) => setCommissionRate(Number(e.target.value))}
                   className="w-full border border-slate-300 rounded-xl p-2.5 font-bold text-emerald-800 text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"

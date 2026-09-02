@@ -594,6 +594,199 @@ export async function deleteRecordFromSupabase(table: string, matchColumn: strin
 }
 
 /**
+ * Direct INSERT / UPSERT of a new candidate directly to Supabase `public.candidates` table.
+ * After successful insert, refreshes the candidate list from Supabase and broadcasts to all clients.
+ */
+export async function insertCandidateDirectToSupabase(newCandidate: Candidate): Promise<{
+  success: boolean;
+  message: string;
+  candidate?: Candidate;
+  candidates?: Candidate[];
+}> {
+  const supabase = getSupabase();
+  const now = new Date().toISOString();
+
+  if (!supabase) {
+    return {
+      success: false,
+      message: 'Supabase client is not initialized or connected.',
+    };
+  }
+
+  try {
+    const formatted = formatCandidateRow(newCandidate, now);
+
+    // 1. Direct INSERT to public.candidates table (with upsert on tracking_id conflict)
+    const { error: insertErr } = await supabase
+      .from('candidates')
+      .upsert([formatted], { onConflict: 'tracking_id' });
+
+    if (insertErr) {
+      console.error('Direct Supabase candidate INSERT error:', insertErr);
+      throw new Error(insertErr.message || 'Failed to insert candidate into Supabase table');
+    }
+
+    // 2. Fetch full updated list from Supabase
+    const { data: allTableRows, error: fetchErr } = await supabase
+      .from('candidates')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    let freshCandidates: Candidate[] = [];
+    if (!fetchErr && Array.isArray(allTableRows)) {
+      freshCandidates = allTableRows.map((r: any) => ({
+        id: r.id || 'cand-' + r.tracking_id,
+        trackingId: r.tracking_id,
+        fullName: r.full_name,
+        fatherName: r.father_name || '',
+        passportNumber: r.passport_number || '',
+        passportExpiry: r.passport_expiry || '',
+        dateOfBirth: r.date_of_birth || '',
+        gender: r.gender || 'Male',
+        nationality: r.nationality || 'Indian',
+        phoneNumber: r.phone_number || '',
+        whatsappNumber: r.whatsapp_number || r.phone_number || '',
+        email: r.email || '',
+        address: r.address || '',
+        city: r.city || '',
+        state: r.state || '',
+        trade: r.trade || 'General Worker',
+        experienceYears: Number(r.experience_years) || 0,
+        education: r.education || '',
+        jobId: r.job_id || '',
+        jobTitle: r.job_title || '',
+        sponsorName: r.sponsor_name || '',
+        visaCategory: r.visa_category || '',
+        visaNumber: r.visa_number || '',
+        mofaNumber: r.mofa_number || '',
+        idNumber: r.id_number || '',
+        wakalaNumber: r.wakala_number || '',
+        status: r.status || 'applied',
+        statusHistory: Array.isArray(r.status_history) ? r.status_history : [],
+        flightDetails: r.flight_details || undefined,
+        partnerOfficeId: r.partner_agent_id || '',
+        partnerOfficeName: r.partner_agent_name || '',
+        packageFee: Number(r.package_fee) || 0,
+        totalPaid: Number(r.total_paid) || 0,
+        balanceDue: Number(r.balance_due) || 0,
+        paymentHistory: Array.isArray(r.payment_history) ? r.payment_history : [],
+        photoUrl: r.photo_url || '',
+        passportScanUrl: r.passport_scan_url || '',
+        medicalReportUrl: r.medical_report_url || '',
+        tradeCertificateUrl: r.trade_certificate_url || '',
+        cvUrl: r.cv_url || '',
+        remarks: r.remarks || '',
+        createdAt: r.created_at || now,
+        updatedAt: r.updated_at || now,
+      }));
+    }
+
+    // 3. Sync to central document store
+    if (freshCandidates.length > 0) {
+      await supabase.from('al_hera_sync_store').upsert(
+        { key: 'candidates', data: freshCandidates, updated_at: now },
+        { onConflict: 'key' }
+      );
+    }
+
+    // 4. Broadcast Realtime Sync Event
+    if (realtimeChannelInstance) {
+      realtimeChannelInstance.send({
+        type: 'broadcast',
+        event: 'sync_update',
+        payload: { key: 'candidates', timestamp: now },
+      });
+    }
+
+    return {
+      success: true,
+      message: `Candidate ${newCandidate.fullName} (${newCandidate.trackingId}) successfully inserted to Supabase public.candidates table!`,
+      candidate: freshCandidates.find((c) => c.trackingId === newCandidate.trackingId) || newCandidate,
+      candidates: freshCandidates,
+    };
+  } catch (err: any) {
+    console.error('Error in insertCandidateDirectToSupabase:', err);
+    return {
+      success: false,
+      message: err?.message || 'Error inserting candidate into Supabase database.',
+    };
+  }
+}
+
+/**
+ * Direct query to fetch the entire candidates collection freshly from Supabase.
+ */
+export async function fetchCandidatesDirectFromSupabase(): Promise<{
+  success: boolean;
+  candidates: Candidate[];
+  message: string;
+}> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return { success: false, candidates: [], message: 'Supabase not configured' };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('candidates')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    const candidates: Candidate[] = (data || []).map((r: any) => ({
+      id: r.id || 'cand-' + r.tracking_id,
+      trackingId: r.tracking_id,
+      fullName: r.full_name,
+      fatherName: r.father_name || '',
+      passportNumber: r.passport_number || '',
+      passportExpiry: r.passport_expiry || '',
+      dateOfBirth: r.date_of_birth || '',
+      gender: r.gender || 'Male',
+      nationality: r.nationality || 'Indian',
+      phoneNumber: r.phone_number || '',
+      whatsappNumber: r.whatsapp_number || r.phone_number || '',
+      email: r.email || '',
+      address: r.address || '',
+      city: r.city || '',
+      state: r.state || '',
+      trade: r.trade || 'General Worker',
+      experienceYears: Number(r.experience_years) || 0,
+      education: r.education || '',
+      jobId: r.job_id || '',
+      jobTitle: r.job_title || '',
+      sponsorName: r.sponsor_name || '',
+      visaCategory: r.visa_category || '',
+      visaNumber: r.visa_number || '',
+      mofaNumber: r.mofa_number || '',
+      idNumber: r.id_number || '',
+      wakalaNumber: r.wakala_number || '',
+      status: r.status || 'applied',
+      statusHistory: Array.isArray(r.status_history) ? r.status_history : [],
+      flightDetails: r.flight_details || undefined,
+      partnerOfficeId: r.partner_agent_id || '',
+      partnerOfficeName: r.partner_agent_name || '',
+      packageFee: Number(r.package_fee) || 0,
+      totalPaid: Number(r.total_paid) || 0,
+      balanceDue: Number(r.balance_due) || 0,
+      paymentHistory: Array.isArray(r.payment_history) ? r.payment_history : [],
+      photoUrl: r.photo_url || '',
+      passportScanUrl: r.passport_scan_url || '',
+      medicalReportUrl: r.medical_report_url || '',
+      tradeCertificateUrl: r.trade_certificate_url || '',
+      cvUrl: r.cv_url || '',
+      remarks: r.remarks || '',
+      createdAt: r.created_at || new Date().toISOString(),
+      updatedAt: r.updated_at || new Date().toISOString(),
+    }));
+
+    return { success: true, candidates, message: `Loaded ${candidates.length} candidates from Supabase.` };
+  } catch (err: any) {
+    return { success: false, candidates: [], message: err?.message || 'Error fetching candidates' };
+  }
+}
+
+/**
  * Push all local data collections to Supabase (Dual storage: Structured Tables + Sync Document Store)
  */
 export async function pushAllToSupabase(data: {

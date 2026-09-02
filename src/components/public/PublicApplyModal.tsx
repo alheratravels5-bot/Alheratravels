@@ -3,6 +3,7 @@ import { X, Send, CheckCircle2, Upload, User, Phone, MapPin, Briefcase, FileText
 import { JobVacancy, Candidate, AgencyInfo } from '../../types';
 import { getCandidates, saveCandidates, getAgencyInfo } from '../../lib/storage';
 import { formatWhatsAppUrl, logSentMessage } from '../../lib/notifications';
+import { insertCandidateDirectToSupabase, fetchCandidatesDirectFromSupabase } from '../../lib/supabase';
 
 interface PublicApplyModalProps {
   job: JobVacancy | null;
@@ -76,7 +77,7 @@ export const PublicApplyModal: React.FC<PublicApplyModalProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
 
@@ -125,8 +126,15 @@ export const PublicApplyModal: React.FC<PublicApplyModalProps> = ({
       updatedAt: new Date().toISOString(),
     };
 
-    const currentCandidates = getCandidates();
-    saveCandidates([newCandidate, ...currentCandidates]);
+    // Save directly to Supabase
+    await insertCandidateDirectToSupabase(newCandidate);
+    const refreshed = await fetchCandidatesDirectFromSupabase();
+    if (refreshed.success && refreshed.candidates && refreshed.candidates.length > 0) {
+      saveCandidates(refreshed.candidates);
+    } else {
+      const currentCandidates = getCandidates();
+      saveCandidates([newCandidate, ...currentCandidates]);
+    }
 
     // Send WhatsApp notification confirmation to candidate
     const confirmMsg = `Assalamu Alaikum *${fullName}*,\n\nThank you for applying with *AL-HERA TRAVELS* for *${job?.title || 'Overseas Vacancy'}* in Saudi Arabia.\n\n📌 *Your Tracking ID:* ${trackingId}\n🔢 *Passport Number:* ${passportNumber.toUpperCase()}\n\nOur recruitment desk will review your credentials and contact you for client interview scheduling.\n📞 Contact: ${agency.phone}`;
