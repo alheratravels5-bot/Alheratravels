@@ -208,6 +208,7 @@ function formatCandidateRow(c: Candidate, now: string) {
     flight_details: c.flightDetails || null,
     partner_agent_id: c.partnerOfficeId || c.partnerAgentId || '',
     partner_agent_name: c.partnerOfficeName || c.partnerAgentName || '',
+    partner_office_paid_amount: Number((c as any).partnerOfficePaidAmount) || 0,
     package_fee: Number(c.packageFee) || 0,
     total_paid: Number(c.totalPaid) || 0,
     balance_due: Number(c.balanceDue) || 0,
@@ -556,6 +557,34 @@ export async function syncCollectionToSupabase(collectionKey: string, data: any)
       }));
       if (formatted.length > 0) {
         await supabase.from('crm_follow_ups').upsert(formatted, { onConflict: 'id' });
+      }
+    } else if (collectionKey === 'partner_payments' && Array.isArray(data)) {
+      const formatted = data.map((p: PartnerOfficePayment) => ({
+        id: p.id,
+        payment_number: p.paymentNumber,
+        partner_office_id: p.partnerOfficeId,
+        partner_office_name: p.partnerOfficeName,
+        amount: Number(p.amount) || 0,
+        payment_date: p.paymentDate,
+        payment_method: p.paymentMethod,
+        reference_number: p.referenceNumber,
+        related_batch_id: p.relatedBatchId || null,
+        related_batch_code: p.relatedBatchCode || null,
+        related_visa_id: p.relatedVisaId || null,
+        related_visa_code: p.relatedVisaCode || null,
+        related_candidate_id: p.relatedCandidateId || null,
+        related_candidate_tracking_id: p.relatedCandidateTrackingId || null,
+        related_candidate_name: p.relatedCandidateName || null,
+        notes: p.notes || null,
+        recorded_by: p.recordedBy || 'Administrator',
+        created_at: p.createdAt || now,
+      }));
+      if (formatted.length > 0) {
+        try {
+          await supabase.from('partner_payments').upsert(formatted, { onConflict: 'id' });
+        } catch {
+          // al_hera_sync_store backup already successfully preserved this
+        }
       }
     }
 

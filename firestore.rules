@@ -35,6 +35,20 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Partner Payments & Ledger
+    match /partner_payments/{paymentId} {
+      allow read, write: if true;
+    }
+    match /partner_ledger/{ledgerId} {
+      allow read, write: if true;
+    }
+    match /visa_batches/{batchId} {
+      allow read, write: if true;
+    }
+    match /visas/{visaId} {
+      allow read, write: if true;
+    }
+
     // Agency Settings collection
     match /settings/{settingId} {
       allow read: if true;

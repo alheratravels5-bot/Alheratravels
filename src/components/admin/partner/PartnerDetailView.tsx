@@ -29,7 +29,10 @@ import {
   Sparkles,
   ChevronRight,
   Eye,
-  FileText
+  FileText,
+  X,
+  User,
+  Edit3
 } from 'lucide-react';
 import {
   PartnerOffice,
@@ -45,6 +48,7 @@ import { getAgencyInfo } from '../../../lib/storage';
 import { computePartnerFinancials, computeRunningLedger } from '../../../lib/partnerCalculations';
 import { generatePartnerStatementPdf } from '../../../lib/pdfGenerator';
 import { PartnerLedgerModal } from './PartnerLedgerModal';
+import { FetchUpdatePaymentModal } from '../FetchUpdatePaymentModal';
 
 interface PartnerDetailViewProps {
   partner: PartnerOffice;
@@ -57,9 +61,10 @@ interface PartnerDetailViewProps {
   onBack: () => void;
   onOpenReceiveBatch: () => void;
   onOpenAssignCandidate: (visa?: IndividualVisa) => void;
-  onOpenRecordPayment: () => void;
+  onOpenRecordPayment: (candidateId?: string) => void;
   onOpenFullLedger: () => void;
   onSelectCandidateDetail?: (candidate: Candidate) => void;
+  onRefreshData?: () => void;
 }
 
 export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
@@ -76,11 +81,16 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
   onOpenRecordPayment,
   onOpenFullLedger,
   onSelectCandidateDetail,
+  onRefreshData,
 }) => {
   const [activeTab, setActiveTab] = useState<
     'overview' | 'batches' | 'visas' | 'candidates' | 'payments' | 'ledger' | 'audit'
   >('overview');
   const [isLedgerModalOpen, setIsLedgerModalOpen] = useState<boolean>(false);
+
+  // State for Fetch & Update Payment Modal
+  const [isFetchUpdateModalOpen, setIsFetchUpdateModalOpen] = useState(false);
+  const [selectedPartnerPaymentForEdit, setSelectedPartnerPaymentForEdit] = useState<string | null>(null);
 
   // Filter criteria
   const [visaSearch, setVisaSearch] = useState('');
@@ -105,15 +115,88 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
     [allVisas, partner.id]
   );
 
-  const partnerCandidates = useMemo(
-    () => allCandidates.filter((c) => c.partnerOfficeId === partner.id || c.partnerAgentId === partner.id),
-    [allCandidates, partner.id]
-  );
+  const [selectedCandidateForPaymentHistory, setSelectedCandidateForPaymentHistory] = useState<Candidate | null>(null);
+  const [paymentCandidateFilter, setPaymentCandidateFilter] = useState<string>('all');
+  const [candidateSearchFilter, setCandidateSearchFilter] = useState<string>('');
+
+  const partnerCandidates = useMemo(() => {
+    const direct = allCandidates.filter((c) => c.partnerOfficeId === partner.id || c.partnerAgentId === partner.id);
+    const visaAssigned = allVisas
+      .filter((v) => v.partnerOfficeId === partner.id && (v.candidateId || v.candidateTrackingId))
+      .map((v) => v.candidateId || v.candidateTrackingId);
+    const visaSet = new Set(visaAssigned);
+    const fromVisas = allCandidates.filter((c) => visaSet.has(c.id) || visaSet.has(c.trackingId));
+
+    const map = new Map<string, Candidate>();
+    [...direct, ...fromVisas].forEach((c) => {
+      if (c && c.id) map.set(c.id, c);
+    });
+    return Array.from(map.values());
+  }, [allCandidates, allVisas, partner.id]);
 
   const partnerPayments = useMemo(
     () => allPayments.filter((p) => p.partnerOfficeId === partner.id),
     [allPayments, partner.id]
   );
+
+  // Candidate-wise payments breakdown for this partner office
+  const partnerCandidatesWithPayments = useMemo(() => {
+    return partnerCandidates.map((c) => {
+      const cPayments = partnerPayments.filter(
+        (p) =>
+          (p.relatedCandidateId && (p.relatedCandidateId === c.id || p.relatedCandidateId === c.trackingId)) ||
+          (p.relatedCandidateTrackingId && p.relatedCandidateTrackingId === c.trackingId)
+      );
+      const totalPaid = cPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+      const linkedVisa = partnerVisas.find(
+        (v) => v.candidateId === c.id || v.candidateTrackingId === c.trackingId
+      );
+
+      const partnerCost = linkedVisa
+        ? (Number(linkedVisa.partnerPayableAmount) || Number(linkedVisa.visaAmount) || 0)
+        : (Number(c.partnerPayableAmount) || Number(c.visaAmount) || 0);
+
+      const balanceDue = Math.max(0, partnerCost - totalPaid);
+
+      return {
+        candidate: c,
+        payments: cPayments,
+        totalPaid,
+        partnerCost,
+        balanceDue,
+        linkedVisa,
+      };
+    });
+  }, [partnerCandidates, partnerPayments, partnerVisas]);
+
+  // Aggregate candidate financial metrics
+  const candidateFinancialRollup = useMemo(() => {
+    let totalPartnerCost = 0;
+    let totalRemitted = 0;
+    let totalBalanceDue = 0;
+    partnerCandidatesWithPayments.forEach((item) => {
+      totalPartnerCost += item.partnerCost;
+      totalRemitted += item.totalPaid;
+      totalBalanceDue += item.balanceDue;
+    });
+
+    const candidateLinkedPaymentsTotal = partnerPayments
+      .filter((p) => p.relatedCandidateId || p.relatedCandidateTrackingId)
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+    const officeGeneralPaymentsTotal = partnerPayments
+      .filter((p) => !p.relatedCandidateId && !p.relatedCandidateTrackingId)
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+    return {
+      totalPartnerCost,
+      totalRemitted,
+      totalBalanceDue,
+      candidateLinkedPaymentsTotal,
+      officeGeneralPaymentsTotal,
+    };
+  }, [partnerCandidatesWithPayments, partnerPayments]);
 
   const partnerLedger = useMemo(() => {
     const existing = allLedger.filter((l) => l.partnerOfficeId === partner.id);
@@ -268,7 +351,7 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
           </button>
 
           <button
-            onClick={onOpenRecordPayment}
+            onClick={() => onOpenRecordPayment()}
             className="px-3.5 py-2 rounded-xl bg-[#0F1E36] hover:bg-[#1A3258] text-amber-400 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
           >
             <DollarSign className="w-3.5 h-3.5" />
@@ -845,62 +928,226 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
         </div>
       )}
 
-      {/* TAB 4: CANDIDATES */}
+      {/* TAB 4: CANDIDATES & PAYMENT TRACKING */}
       {activeTab === 'candidates' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between">
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5 shadow-sm">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="font-bold text-sm text-[#0F1E36]">Candidates Placed on Partner's Visas ({partnerCandidates.length})</h3>
-              <p className="text-xs text-slate-500">All overseas candidates deployed or processing through this partner office.</p>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-sm text-[#0F1E36]">
+                  Candidate-Wise Visa & Payment Accounts ({partnerCandidates.length})
+                </h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                  Live Candidate Dues & Remittances
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Detailed record of visa costs, remittances paid to {partner.agencyName}, and remaining dues per candidate.
+              </p>
             </div>
-            <button
-              onClick={() => onOpenAssignCandidate()}
-              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm"
-            >
-              <UserCheck className="w-3.5 h-3.5" />
-              <span>Link Candidate</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => onOpenRecordPayment()}
+                className="px-3 py-1.5 rounded-xl bg-[#0F1E36] hover:bg-[#1A3258] text-amber-400 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
+              >
+                <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Record Payment</span>
+              </button>
+              <button
+                onClick={() => onOpenAssignCandidate()}
+                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>Link Candidate</span>
+              </button>
+            </div>
           </div>
 
+          {/* Candidate Financial KPI Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+                Total Candidates
+              </span>
+              <p className="text-lg font-mono font-extrabold text-slate-900 mt-0.5">
+                {partnerCandidates.length}
+              </p>
+              <span className="text-[10px] text-slate-400">Assigned / In-flight</span>
+            </div>
+
+            <div className="bg-blue-50/60 border border-blue-200/80 rounded-xl p-3">
+              <span className="text-[10px] text-blue-700 font-bold uppercase tracking-wider block">
+                Partner Visa Cost
+              </span>
+              <p className="text-lg font-mono font-extrabold text-blue-900 mt-0.5">
+                ₹{candidateFinancialRollup.totalPartnerCost.toLocaleString('en-IN')}
+              </p>
+              <span className="text-[10px] text-blue-600">Total payable across candidates</span>
+            </div>
+
+            <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-3">
+              <span className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider block">
+                Paid to Partner
+              </span>
+              <p className="text-lg font-mono font-extrabold text-emerald-900 mt-0.5">
+                ₹{candidateFinancialRollup.totalRemitted.toLocaleString('en-IN')}
+              </p>
+              <span className="text-[10px] text-emerald-600">Candidate-linked remittances</span>
+            </div>
+
+            <div className="bg-amber-50/60 border border-amber-200/80 rounded-xl p-3">
+              <span className="text-[10px] text-amber-700 font-bold uppercase tracking-wider block">
+                Candidate Dues Pending
+              </span>
+              <p className="text-lg font-mono font-extrabold text-amber-900 mt-0.5">
+                ₹{candidateFinancialRollup.totalBalanceDue.toLocaleString('en-IN')}
+              </p>
+              <span className="text-[10px] text-amber-600">Remaining to be paid</span>
+            </div>
+          </div>
+
+          {/* Search bar inside Candidate tab */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                value={candidateSearchFilter}
+                onChange={(e) => setCandidateSearchFilter(e.target.value)}
+                placeholder="Search candidate name, tracking ID, passport, or trade..."
+                className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs focus:ring-1 focus:ring-amber-500 focus:outline-none"
+              />
+            </div>
+            {candidateSearchFilter && (
+              <button
+                onClick={() => setCandidateSearchFilter('')}
+                className="text-xs text-slate-500 hover:text-slate-700 underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Candidates & Payment Table */}
           <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-slate-900 text-white text-[10px] font-bold uppercase tracking-wider">
                 <tr>
-                  <th className="py-3 px-4">Tracking ID & Name</th>
+                  <th className="py-3 px-4">Candidate & Tracking ID</th>
                   <th className="py-3 px-3">Passport No.</th>
                   <th className="py-3 px-3">Trade / Job</th>
                   <th className="py-3 px-3">Linked Visa ID</th>
-                  <th className="py-3 px-3 text-right">Package Fee</th>
-                  <th className="py-3 px-3 text-right">Al-Hera Margin</th>
-                  <th className="py-3 px-4 text-center">Status</th>
+                  <th className="py-3 px-3 text-right">Partner Cost</th>
+                  <th className="py-3 px-3 text-right">Paid to Partner</th>
+                  <th className="py-3 px-3 text-right">Balance Due</th>
+                  <th className="py-3 px-3 text-center">Settlement Status</th>
+                  <th className="py-3 px-4 text-center">Candidate Payments</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {partnerCandidates.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-3 px-4">
-                      <span className="font-mono font-bold text-slate-900 block">{c.trackingId}</span>
-                      <strong className="text-slate-800">{c.fullName}</strong>
-                    </td>
-                    <td className="py-3 px-3 font-mono font-bold uppercase text-slate-700">{c.passportNumber}</td>
-                    <td className="py-3 px-3 text-slate-800">{c.trade}</td>
-                    <td className="py-3 px-3 font-mono font-semibold text-amber-800">{c.visaId || 'General Pool'}</td>
-                    <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
-                      ₹{(c.packageFee || 0).toLocaleString('en-IN')}
-                    </td>
-                    <td className="py-3 px-3 text-right font-mono font-extrabold text-emerald-700">
-                      ₹{(c.partnerCommission || c.alHeraCommission || 0).toLocaleString('en-IN')}
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
-                        {c.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {partnerCandidatesWithPayments
+                  .filter((item) => {
+                    if (!candidateSearchFilter.trim()) return true;
+                    const q = candidateSearchFilter.toLowerCase();
+                    return (
+                      item.candidate.fullName?.toLowerCase().includes(q) ||
+                      item.candidate.trackingId?.toLowerCase().includes(q) ||
+                      item.candidate.passportNumber?.toLowerCase().includes(q) ||
+                      item.candidate.trade?.toLowerCase().includes(q)
+                    );
+                  })
+                  .map((item) => {
+                    const c = item.candidate;
+                    const isFullyPaid = item.partnerCost > 0 && item.totalPaid >= item.partnerCost;
+                    const isPartiallyPaid = item.totalPaid > 0 && item.totalPaid < item.partnerCost;
+
+                    return (
+                      <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 font-bold text-xs shrink-0">
+                              {c.fullName ? c.fullName.charAt(0).toUpperCase() : 'C'}
+                            </div>
+                            <div>
+                              <span className="font-mono font-bold text-slate-900 block text-xs">
+                                {c.trackingId}
+                              </span>
+                              <strong className="text-slate-800 block text-xs">{c.fullName}</strong>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 font-mono font-bold uppercase text-slate-700">
+                          {c.passportNumber}
+                        </td>
+                        <td className="py-3 px-3 text-slate-800">{c.trade}</td>
+                        <td className="py-3 px-3 font-mono font-semibold text-amber-800">
+                          {item.linkedVisa?.visaNumber || c.visaId || 'General Pool'}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
+                          ₹{item.partnerCost.toLocaleString('en-IN')}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <span className="font-mono font-extrabold text-emerald-700 block">
+                            ₹{item.totalPaid.toLocaleString('en-IN')}
+                          </span>
+                          {item.payments.length > 0 && (
+                            <span className="text-[10px] text-slate-400">
+                              ({item.payments.length} {item.payments.length === 1 ? 'voucher' : 'vouchers'})
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-bold">
+                          <span className={item.balanceDue > 0 ? 'text-amber-700' : 'text-slate-400'}>
+                            ₹{item.balanceDue.toLocaleString('en-IN')}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          {isFullyPaid ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 inline-flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>Settled</span>
+                            </span>
+                          ) : isPartiallyPaid ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                              Partial
+                            </span>
+                          ) : item.partnerCost === 0 ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                              No Cost
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-700">
+                              Unpaid
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => setSelectedCandidateForPaymentHistory(c)}
+                              className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-800 font-bold text-[11px] flex items-center gap-1 transition-all"
+                              title="View all payments made to partner for this candidate"
+                            >
+                              <History className="w-3 h-3" />
+                              <span>{item.payments.length > 0 ? `${item.payments.length} Payments` : 'View'}</span>
+                            </button>
+                            <button
+                              onClick={() => onOpenRecordPayment(c.id)}
+                              className="px-2.5 py-1 rounded-lg bg-[#0F1E36] hover:bg-[#1A3258] text-amber-400 font-bold text-[11px] flex items-center gap-1 transition-all"
+                              title="Record a payment to partner for this candidate"
+                            >
+                              <DollarSign className="w-3 h-3 text-emerald-400" />
+                              <span>Pay</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 {partnerCandidates.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                    <td colSpan={9} className="py-8 text-center text-slate-400">
                       No candidates assigned to this partner yet.
                     </td>
                   </tr>
@@ -911,23 +1158,169 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
         </div>
       )}
 
-      {/* TAB 5: PAYMENTS */}
+      {/* TAB 5: PAYMENTS & CANDIDATE REMITTANCES */}
       {activeTab === 'payments' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between">
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5 shadow-sm">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="font-bold text-sm text-[#0F1E36]">Settlement & Payment Records ({partnerPayments.length})</h3>
-              <p className="text-xs text-slate-500">Record of payments remitted to {partner.agencyName}.</p>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-sm text-[#0F1E36]">
+                  Settlement & Payment Records ({partnerPayments.length})
+                </h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                  Candidate Linked & Office Settlements
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Detailed record of all payments remitted to {partner.agencyName}, tracking candidate-wise payments and total paid amounts.
+              </p>
             </div>
-            <button
-              onClick={onOpenRecordPayment}
-              className="px-4 py-2 rounded-xl bg-[#0F1E36] hover:bg-[#1A3258] text-amber-400 font-bold text-xs flex items-center gap-2 shadow-sm"
-            >
-              <DollarSign className="w-4 h-4 text-emerald-400" />
-              <span>Record New Payment</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                id="partner-fetch-update-btn"
+                onClick={() => {
+                  setSelectedPartnerPaymentForEdit(null);
+                  setIsFetchUpdateModalOpen(true);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-transform active:scale-95"
+                title="Fetch, edit, or void old partner remittance vouchers"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Fetch & Update Payment</span>
+              </button>
+              <button
+                onClick={() => onOpenRecordPayment()}
+                className="px-4 py-2 rounded-xl bg-[#0F1E36] hover:bg-[#1A3258] text-amber-400 font-bold text-xs flex items-center gap-2 shadow-sm transition-all"
+              >
+                <DollarSign className="w-4 h-4 text-emerald-400" />
+                <span>Record New Payment</span>
+              </button>
+            </div>
           </div>
 
+          {/* Payment Metrics Overview Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="bg-slate-900 text-white rounded-2xl p-4 shadow-sm space-y-1">
+              <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">
+                Total Remitted to Partner
+              </span>
+              <p className="text-2xl font-mono font-extrabold text-white">
+                ₹{financials.totalPaidToPartner.toLocaleString('en-IN')}
+              </p>
+              <span className="text-xs text-slate-400 block">
+                Across all {partnerPayments.length} recorded vouchers
+              </span>
+            </div>
+
+            <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4 shadow-sm space-y-1">
+              <span className="text-[10px] text-emerald-800 font-bold uppercase tracking-wider block">
+                Candidate-Linked Remittances
+              </span>
+              <p className="text-2xl font-mono font-extrabold text-emerald-900">
+                ₹{candidateFinancialRollup.candidateLinkedPaymentsTotal.toLocaleString('en-IN')}
+              </p>
+              <span className="text-xs text-emerald-700 block">
+                {partnerPayments.filter((p) => p.relatedCandidateId || p.relatedCandidateTrackingId).length} payments linked to specific candidates
+              </span>
+            </div>
+
+            <div className="bg-blue-50/70 border border-blue-200/80 rounded-2xl p-4 shadow-sm space-y-1">
+              <span className="text-[10px] text-blue-800 font-bold uppercase tracking-wider block">
+                General Office Settlements
+              </span>
+              <p className="text-2xl font-mono font-extrabold text-blue-900">
+                ₹{candidateFinancialRollup.officeGeneralPaymentsTotal.toLocaleString('en-IN')}
+              </p>
+              <span className="text-xs text-blue-700 block">
+                {partnerPayments.filter((p) => !p.relatedCandidateId && !p.relatedCandidateTrackingId).length} batch / general pool settlements
+              </span>
+            </div>
+          </div>
+
+          {/* Candidate-Wise Payment Breakdown Cards */}
+          {partnerCandidatesWithPayments.some((item) => item.totalPaid > 0) && (
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Candidate-Wise Remittance Summary
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {partnerCandidatesWithPayments
+                  .filter((item) => item.totalPaid > 0)
+                  .map((item) => (
+                    <div
+                      key={item.candidate.id}
+                      className="bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl p-3 transition-colors flex items-center justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-[11px] font-bold text-slate-900">
+                            {item.candidate.trackingId}
+                          </span>
+                          <span className="text-slate-400">•</span>
+                          <span className="text-xs font-bold text-slate-800">{item.candidate.fullName}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          {item.candidate.trade || 'Visa'} • {item.payments.length} {item.payments.length === 1 ? 'payment' : 'payments'}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs font-mono font-extrabold text-emerald-700 block">
+                          ₹{item.totalPaid.toLocaleString('en-IN')}
+                        </span>
+                        <button
+                          onClick={() => setSelectedCandidateForPaymentHistory(item.candidate)}
+                          className="text-[10px] font-bold text-blue-700 hover:text-blue-900 underline"
+                        >
+                          View History
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {/* Filter Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+            <div className="flex items-center gap-2 flex-1">
+              <label className="text-xs font-bold text-slate-700 shrink-0">Filter by Candidate:</label>
+              <select
+                value={paymentCandidateFilter}
+                onChange={(e) => setPaymentCandidateFilter(e.target.value)}
+                className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white text-slate-900 focus:ring-1 focus:ring-amber-500 max-w-xs"
+              >
+                <option value="all">All Payments ({partnerPayments.length})</option>
+                <option value="general">
+                  General Office Settlements ({partnerPayments.filter((p) => !p.relatedCandidateId && !p.relatedCandidateTrackingId).length})
+                </option>
+                <optgroup label="Candidates Placed">
+                  {partnerCandidates.map((c) => {
+                    const cCount = partnerPayments.filter(
+                      (p) =>
+                        (p.relatedCandidateId && (p.relatedCandidateId === c.id || p.relatedCandidateId === c.trackingId)) ||
+                        (p.relatedCandidateTrackingId && p.relatedCandidateTrackingId === c.trackingId)
+                    ).length;
+                    return (
+                      <option key={c.id} value={c.id}>
+                        [{c.trackingId}] {c.fullName} ({cCount} payments)
+                      </option>
+                    );
+                  })}
+                </optgroup>
+              </select>
+              {paymentCandidateFilter !== 'all' && (
+                <button
+                  onClick={() => setPaymentCandidateFilter('all')}
+                  className="text-xs text-slate-500 hover:text-slate-700 underline"
+                >
+                  Reset Filter
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Payments Table */}
           <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-slate-900 text-white text-[10px] font-bold uppercase tracking-wider">
@@ -936,30 +1329,112 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
                   <th className="py-3 px-3">Date</th>
                   <th className="py-3 px-3">Mode</th>
                   <th className="py-3 px-4">UTR / Ref No.</th>
+                  <th className="py-3 px-4">Linked Candidate</th>
                   <th className="py-3 px-3">Tagged Batch</th>
+                  <th className="py-3 px-4">Remarks & Notes</th>
                   <th className="py-3 px-4 text-right">Amount Paid</th>
+                  <th className="py-3 px-4 text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {partnerPayments.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-3 px-4 font-mono font-bold text-slate-900">{p.paymentNumber}</td>
-                    <td className="py-3 px-3 text-slate-600">{p.paymentDate}</td>
-                    <td className="py-3 px-3">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-800">
-                        {p.paymentMethod}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-mono text-slate-700">{p.referenceNumber}</td>
-                    <td className="py-3 px-3 font-mono text-slate-500">{p.relatedBatchCode || 'General Settlement'}</td>
-                    <td className="py-3 px-4 text-right font-mono font-extrabold text-emerald-700 text-sm">
-                      ₹{p.amount.toLocaleString('en-IN')}
-                    </td>
-                  </tr>
-                ))}
+                {partnerPayments
+                  .filter((p) => {
+                    if (paymentCandidateFilter === 'all') return true;
+                    if (paymentCandidateFilter === 'general') {
+                      return !p.relatedCandidateId && !p.relatedCandidateTrackingId;
+                    }
+                    const cand = partnerCandidates.find((c) => c.id === paymentCandidateFilter);
+                    if (!cand) return false;
+                    return (
+                      p.relatedCandidateId === cand.id ||
+                      p.relatedCandidateId === cand.trackingId ||
+                      p.relatedCandidateTrackingId === cand.trackingId
+                    );
+                  })
+                  .map((p) => {
+                    const isCandidateLinked = Boolean(p.relatedCandidateId || p.relatedCandidateTrackingId || p.relatedCandidateName);
+                    const matchingCandidate = partnerCandidates.find(
+                      (c) =>
+                        c.id === p.relatedCandidateId ||
+                        c.trackingId === p.relatedCandidateTrackingId ||
+                        c.trackingId === p.relatedCandidateId
+                    );
+
+                    return (
+                      <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="py-3 px-4 font-mono font-bold text-slate-900">
+                          {p.paymentNumber}
+                        </td>
+                        <td className="py-3 px-3 text-slate-600">{p.paymentDate}</td>
+                        <td className="py-3 px-3">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-800">
+                            {p.paymentMethod}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-mono text-slate-700">
+                          {p.referenceNumber || '-'}
+                        </td>
+                        <td className="py-3 px-4">
+                          {isCandidateLinked ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-mono font-bold text-[10px]">
+                                {p.relatedCandidateTrackingId || 'CAND'}
+                              </span>
+                              <div>
+                                <span className="font-bold text-slate-800 text-xs block">
+                                  {p.relatedCandidateName || 'Assigned Candidate'}
+                                </span>
+                                {p.relatedCandidateTrade && (
+                                  <span className="text-[10px] text-slate-400 block">
+                                    {p.relatedCandidateTrade}
+                                  </span>
+                                )}
+                              </div>
+                              {matchingCandidate && (
+                                <button
+                                  onClick={() => setSelectedCandidateForPaymentHistory(matchingCandidate)}
+                                  className="text-[10px] text-blue-700 hover:text-blue-900 ml-1 underline shrink-0"
+                                  title="View candidate's payment history"
+                                >
+                                  Details
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] font-semibold text-slate-400 italic">
+                              General Office Settlement
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 font-mono text-slate-500">
+                          {p.relatedBatchCode || 'General'}
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 max-w-xs truncate">
+                          {p.notes || '-'}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono font-extrabold text-emerald-700 text-sm">
+                          ₹{p.amount.toLocaleString('en-IN')}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <button
+                            id={`partner-payment-update-btn-${p.id}`}
+                            onClick={() => {
+                              setSelectedPartnerPaymentForEdit(p.id);
+                              setIsFetchUpdateModalOpen(true);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-bold inline-flex items-center gap-1 shadow-2xs transition-all active:scale-95"
+                            title="Update payment amount, date, or void this record"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                            <span>Update</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 {partnerPayments.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-slate-400">
+                    <td colSpan={9} className="py-8 text-center text-slate-400">
                       No payments recorded yet. Click "Record New Payment" to add settlement.
                     </td>
                   </tr>
@@ -1082,6 +1557,222 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
         visas={allVisas}
         candidates={allCandidates}
         payments={allPayments}
+      />
+
+      {/* Candidate-Specific Partner Payment History Modal */}
+      {selectedCandidateForPaymentHistory && (() => {
+        const cand = selectedCandidateForPaymentHistory;
+        const candPayments = partnerPayments.filter(
+          (p) =>
+            (p.relatedCandidateId && (p.relatedCandidateId === cand.id || p.relatedCandidateId === cand.trackingId)) ||
+            (p.relatedCandidateTrackingId && p.relatedCandidateTrackingId === cand.trackingId)
+        );
+        const candTotalPaid = candPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+        const linkedVisa = partnerVisas.find(
+          (v) => v.candidateId === cand.id || v.candidateTrackingId === cand.trackingId
+        );
+        const candPartnerCost = linkedVisa
+          ? (Number(linkedVisa.partnerPayableAmount) || Number(linkedVisa.visaAmount) || 0)
+          : (Number(cand.partnerPayableAmount) || Number(cand.visaAmount) || 0);
+        const candBalanceDue = Math.max(0, candPartnerCost - candTotalPaid);
+        const isFullySettled = candPartnerCost > 0 && candTotalPaid >= candPartnerCost;
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+            <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+              {/* Modal Header */}
+              <div className="bg-[#0F1E36] p-5 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400">
+                    <History className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-400/20 text-amber-300">
+                        {cand.trackingId}
+                      </span>
+                      <span className="text-xs text-slate-300">• Candidate Payment Ledger</span>
+                    </div>
+                    <h3 className="text-base font-extrabold text-white font-display mt-0.5">
+                      {cand.fullName}
+                    </h3>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedCandidateForPaymentHistory(null)}
+                  className="w-8 h-8 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 overflow-y-auto space-y-5">
+                {/* Candidate & Partner Info Bar */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div className="space-y-1">
+                    <p className="text-slate-500">
+                      Passport:{' '}
+                      <strong className="text-slate-800 font-mono uppercase">
+                        {cand.passportNumber || 'N/A'}
+                      </strong>{' '}
+                      • Trade: <strong className="text-slate-800">{cand.trade || 'Visa'}</strong>
+                    </p>
+                    <p className="text-slate-500">
+                      Partner Office:{' '}
+                      <strong className="text-slate-900 font-medium">
+                        {partner.agencyName} ({partner.partnerCode})
+                      </strong>
+                    </p>
+                  </div>
+                  {linkedVisa && (
+                    <div className="text-left sm:text-right">
+                      <span className="text-[10px] text-slate-400 block font-bold uppercase">
+                        Linked Visa Number
+                      </span>
+                      <span className="font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-xs">
+                        {linkedVisa.visaNumber}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3 Metric Cards */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3.5 text-center">
+                    <span className="text-[10px] text-blue-700 font-bold uppercase tracking-wider block">
+                      Partner Visa Cost
+                    </span>
+                    <p className="text-lg font-mono font-extrabold text-blue-900 mt-1">
+                      ₹{candPartnerCost.toLocaleString('en-IN')}
+                    </p>
+                    <span className="text-[10px] text-blue-600 block">Agreed Payable</span>
+                  </div>
+
+                  <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5 text-center">
+                    <span className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider block">
+                      Total Remitted
+                    </span>
+                    <p className="text-lg font-mono font-extrabold text-emerald-900 mt-1">
+                      ₹{candTotalPaid.toLocaleString('en-IN')}
+                    </p>
+                    <span className="text-[10px] text-emerald-600 block">
+                      {candPayments.length} {candPayments.length === 1 ? 'voucher' : 'vouchers'}
+                    </span>
+                  </div>
+
+                  <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-3.5 text-center">
+                    <span className="text-[10px] text-amber-700 font-bold uppercase tracking-wider block">
+                      Balance Due
+                    </span>
+                    <p className="text-lg font-mono font-extrabold text-amber-900 mt-1">
+                      ₹{candBalanceDue.toLocaleString('en-IN')}
+                    </p>
+                    <span className="text-[10px] text-amber-600 block">
+                      {isFullySettled ? '✓ Fully Cleared' : 'Remaining Payable'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Payment History Table */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      Payments Paid to Partner for this Candidate ({candPayments.length})
+                    </h4>
+                    {isFullySettled && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>All Partner Dues Settled</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-slate-900 text-white text-[10px] font-bold uppercase tracking-wider">
+                        <tr>
+                          <th className="py-2.5 px-3">Voucher #</th>
+                          <th className="py-2.5 px-3">Date</th>
+                          <th className="py-2.5 px-3">Mode</th>
+                          <th className="py-2.5 px-3">UTR / Ref No.</th>
+                          <th className="py-2.5 px-3">Remarks</th>
+                          <th className="py-2.5 px-3 text-right">Amount (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {candPayments.map((p) => (
+                          <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="py-2.5 px-3 font-mono font-bold text-slate-900">
+                              {p.paymentNumber}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600">{p.paymentDate}</td>
+                            <td className="py-2.5 px-3">
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-800">
+                                {p.paymentMethod}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-slate-700">
+                              {p.referenceNumber || '-'}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-500 max-w-xs truncate">
+                              {p.notes || '-'}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-extrabold text-emerald-700">
+                              ₹{p.amount.toLocaleString('en-IN')}
+                            </td>
+                          </tr>
+                        ))}
+                        {candPayments.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="py-8 text-center text-slate-400">
+                              No payments recorded for this candidate yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setSelectedCandidateForPaymentHistory(null)}
+                  className="px-4 py-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold text-xs transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cId = cand.id;
+                    setSelectedCandidateForPaymentHistory(null);
+                    onOpenRecordPayment(cId);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-[#0F1E36] hover:bg-[#1A3258] text-amber-400 font-bold text-xs flex items-center gap-1.5 shadow-md transition-all"
+                >
+                  <DollarSign className="w-4 h-4 text-emerald-400" />
+                  <span>Record Payment for {cand.fullName}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Fetch & Update Payment Modal */}
+      <FetchUpdatePaymentModal
+        isOpen={isFetchUpdateModalOpen}
+        onClose={() => {
+          setIsFetchUpdateModalOpen(false);
+          setSelectedPartnerPaymentForEdit(null);
+        }}
+        initialPartnerPaymentId={selectedPartnerPaymentForEdit || undefined}
+        onPaymentUpdated={() => {
+          onRefreshData?.();
+        }}
       />
     </div>
   );

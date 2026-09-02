@@ -121,6 +121,7 @@ export interface Candidate {
   agentCommission?: number;
   partnerCommission?: number;
   agentCommissionStatus?: 'pending' | 'partial' | 'paid';
+  partnerOfficePaidAmount?: number; // Total amount paid to partner office for this candidate
   
   // Financials
   packageFee: number;
@@ -363,7 +364,10 @@ export interface PartnerOfficePayment {
   relatedVisaId?: string;
   relatedVisaCode?: string;
   relatedCandidateId?: string;
+  relatedCandidateTrackingId?: string;
   relatedCandidateName?: string;
+  relatedCandidatePassport?: string;
+  relatedCandidateTrade?: string;
   notes?: string;
   receiptUrl?: string;
   recordedBy: string;

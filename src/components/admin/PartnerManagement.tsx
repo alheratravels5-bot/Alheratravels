@@ -26,7 +26,8 @@ import {
   Layers,
   ArrowUpRight,
   ShieldCheck,
-  Sparkles
+  Sparkles,
+  Edit3
 } from 'lucide-react';
 import {
   PartnerOffice,
@@ -56,6 +57,7 @@ import { ReceiveVisaBatchModal } from './partner/ReceiveVisaBatchModal';
 import { AssignCandidateToVisaModal } from './partner/AssignCandidateToVisaModal';
 import { RecordPartnerPaymentModal } from './partner/RecordPartnerPaymentModal';
 import { PartnerLedgerModal } from './partner/PartnerLedgerModal';
+import { FetchUpdatePaymentModal } from './FetchUpdatePaymentModal';
 
 interface PartnerManagementProps {
   partners: PartnerOffice[];
@@ -89,7 +91,9 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
   const [isAssignCandidateOpen, setIsAssignCandidateOpen] = useState(false);
   const [selectedVisaForAssignment, setSelectedVisaForAssignment] = useState<IndividualVisa | null>(null);
   const [isRecordPaymentOpen, setIsRecordPaymentOpen] = useState(false);
+  const [selectedCandidateIdForPayment, setSelectedCandidateIdForPayment] = useState<string>('');
   const [isLedgerModalOpen, setIsLedgerModalOpen] = useState(false);
+  const [isFetchUpdateModalOpen, setIsFetchUpdateModalOpen] = useState(false);
 
   // Filter & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -257,9 +261,13 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
           setSelectedVisaForAssignment(visa || null);
           setIsAssignCandidateOpen(true);
         }}
-        onOpenRecordPayment={() => setIsRecordPaymentOpen(true)}
+        onOpenRecordPayment={(candId) => {
+          setSelectedCandidateIdForPayment(candId || '');
+          setIsRecordPaymentOpen(true);
+        }}
         onOpenFullLedger={() => setIsLedgerModalOpen(true)}
         onSelectCandidateDetail={onSelectCandidateDetail}
+        onRefreshData={loadData}
       />
     );
   }
@@ -285,6 +293,16 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
 
         {/* Global Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            id="partner-mgmt-fetch-update-btn"
+            onClick={() => setIsFetchUpdateModalOpen(true)}
+            className="px-3.5 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-300 font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95"
+            title="Fetch from cloud, edit, or void old payment records"
+          >
+            <Edit3 className="w-4 h-4 text-amber-700" />
+            <span>Fetch & Update Payments</span>
+          </button>
+
           <button
             onClick={() => setIsReceiveBatchOpen(true)}
             className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md transition-all"
@@ -649,12 +667,16 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
       {/* 3. Record Partner Payment Modal */}
       <RecordPartnerPaymentModal
         isOpen={isRecordPaymentOpen}
-        onClose={() => setIsRecordPaymentOpen(false)}
+        onClose={() => {
+          setIsRecordPaymentOpen(false);
+          setSelectedCandidateIdForPayment('');
+        }}
         partner={selectedPartnerId ? partners.find((p) => p.id === selectedPartnerId) || null : null}
         allPartners={partners}
         batches={visaBatches}
         visas={individualVisas}
         candidates={candidates}
+        initialCandidateId={selectedCandidateIdForPayment}
         onPaymentRecorded={(payment) => {
           loadData();
           const refreshed = getPartners();
@@ -821,6 +843,13 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
           </div>
         </div>
       )}
+
+      {/* Fetch & Update Payment Modal */}
+      <FetchUpdatePaymentModal
+        isOpen={isFetchUpdateModalOpen}
+        onClose={() => setIsFetchUpdateModalOpen(false)}
+        onPaymentUpdated={loadData}
+      />
     </div>
   );
 };

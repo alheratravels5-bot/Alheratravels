@@ -536,3 +536,64 @@ export async function deletePartnerFromFirestore(partnerId: string): Promise<voi
     console.warn('Firestore partner delete error:', err);
   }
 }
+
+export async function deletePartnerPaymentFromFirestore(paymentId: string): Promise<void> {
+  try {
+    const db = getFirebaseDb();
+    await deleteDoc(doc(db, 'partner_payments', paymentId));
+  } catch (err) {
+    console.warn('Firestore partner payment delete error:', err);
+  }
+}
+
+/**
+ * Specifically fetch all historical candidate payments and partner payments from Firestore
+ */
+export async function fetchOldPaymentsFromFirestore(): Promise<{
+  success: boolean;
+  message: string;
+  candidatePaymentsCount: number;
+  partnerPaymentsCount: number;
+  candidates?: Candidate[];
+  partnerPayments?: PartnerOfficePayment[];
+}> {
+  try {
+    const db = getFirebaseDb();
+
+    // 1. Fetch Candidates (with their payment histories)
+    const candSnap = await getDocs(collection(db, 'candidates'));
+    const candidates: Candidate[] = [];
+    let candidatePaymentsCount = 0;
+    candSnap.forEach((docSnap) => {
+      const c = docSnap.data() as Candidate;
+      candidates.push(c);
+      if (Array.isArray(c.paymentHistory)) {
+        candidatePaymentsCount += c.paymentHistory.length;
+      }
+    });
+
+    // 2. Fetch Partner Payments
+    const paySnap = await getDocs(collection(db, 'partner_payments'));
+    const partnerPayments: PartnerOfficePayment[] = [];
+    paySnap.forEach((docSnap) => {
+      partnerPayments.push(docSnap.data() as PartnerOfficePayment);
+    });
+
+    return {
+      success: true,
+      message: `Fetched ${candidatePaymentsCount} candidate payment receipts and ${partnerPayments.length} partner payment vouchers from Firestore.`,
+      candidatePaymentsCount,
+      partnerPaymentsCount: partnerPayments.length,
+      candidates,
+      partnerPayments,
+    };
+  } catch (error: any) {
+    console.error('Error fetching old payments from Firestore:', error);
+    return {
+      success: false,
+      message: error?.message || 'Failed to fetch old payment records from Firestore.',
+      candidatePaymentsCount: 0,
+      partnerPaymentsCount: 0,
+    };
+  }
+}

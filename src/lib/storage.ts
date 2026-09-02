@@ -19,7 +19,8 @@ import {
   FollowUpPriority,
   FollowUpStatus,
   FollowUpLeadType,
-  FollowUpChannel
+  FollowUpChannel,
+  PaymentRecord
 } from '../types';
 import { computePartnerFinancials, computeRunningLedger } from './partnerCalculations';
 import { enrichAllJobsWithMetrics, enrichJobWithMetrics, createJobStatusHistoryEvent, computeJobCandidateMetrics } from './jobCalculations';
@@ -29,7 +30,10 @@ import {
   saveCandidateToFirestore,
   saveJobToFirestore,
   savePackageToFirestore,
-  savePartnerToFirestore
+  savePartnerToFirestore,
+  savePartnerPaymentToFirestore,
+  savePartnerLedgerToFirestore,
+  deletePartnerPaymentFromFirestore
 } from './firebase';
 
 export const AGENCY_INFO: AgencyInfo = {
@@ -2605,7 +2609,10 @@ export const recordPartnerPayment = (
     relatedVisaId: paymentData.relatedVisaId,
     relatedVisaCode: paymentData.relatedVisaCode,
     relatedCandidateId: paymentData.relatedCandidateId,
+    relatedCandidateTrackingId: paymentData.relatedCandidateTrackingId,
     relatedCandidateName: paymentData.relatedCandidateName,
+    relatedCandidatePassport: paymentData.relatedCandidatePassport,
+    relatedCandidateTrade: paymentData.relatedCandidateTrade,
     notes: paymentData.notes || '',
     receiptUrl: paymentData.receiptUrl,
     recordedBy: user,
@@ -2613,6 +2620,10 @@ export const recordPartnerPayment = (
   };
 
   // Ledger transaction
+  const candidateRefText = newPayment.relatedCandidateName
+    ? ` for [${newPayment.relatedCandidateTrackingId || newPayment.relatedCandidateId || 'Candidate'}] ${newPayment.relatedCandidateName}`
+    : '';
+
   const ledgerTx: PartnerOfficeLedgerEntry = {
     id: 'tx-' + Date.now(),
     transactionId: `TXN-${year}-${(allLedger.length + 1).toString().padStart(3, '0')}`,
@@ -2620,8 +2631,9 @@ export const recordPartnerPayment = (
     date: newPayment.paymentDate,
     type: 'Payment Made',
     visaId: newPayment.relatedVisaCode,
+    candidateId: newPayment.relatedCandidateTrackingId || newPayment.relatedCandidateId,
     candidateName: newPayment.relatedCandidateName,
-    description: `Payment of ₹${newPayment.amount.toLocaleString('en-IN')} via ${newPayment.paymentMethod} (Ref: ${newPayment.referenceNumber})`,
+    description: `Payment of ₹${newPayment.amount.toLocaleString('en-IN')}${candidateRefText} via ${newPayment.paymentMethod} (Ref: ${newPayment.referenceNumber})`,
     debit: newPayment.amount,
     credit: 0,
     commission: 0,
@@ -2629,21 +2641,429 @@ export const recordPartnerPayment = (
     balance: 0,
     paymentMethod: newPayment.paymentMethod,
     referenceNumber: newPayment.referenceNumber,
-    notes: newPayment.notes || 'Partner office account settled',
+    notes: newPayment.notes || (newPayment.relatedCandidateName ? `Payment for candidate ${newPayment.relatedCandidateName}` : 'Partner office account settled'),
     createdAt: new Date().toISOString(),
   };
 
   savePartnerPayments([newPayment, ...allPayments]);
   savePartnerLedgerEntries([...allLedger, ledgerTx]);
+
+  // Update candidate's partnerOfficePaidAmount if linked
+  if (newPayment.relatedCandidateId || newPayment.relatedCandidateTrackingId) {
+    try {
+      const allCandidates = getCandidates();
+      let candidateUpdated = false;
+      const updatedCandidates = allCandidates.map((c) => {
+        const matchesId = newPayment.relatedCandidateId && (c.id === newPayment.relatedCandidateId || c.trackingId === newPayment.relatedCandidateId);
+        const matchesTracking = newPayment.relatedCandidateTrackingId && c.trackingId === newPayment.relatedCandidateTrackingId;
+        if (matchesId || matchesTracking) {
+          candidateUpdated = true;
+          return {
+            ...c,
+            partnerOfficePaidAmount: (Number(c.partnerOfficePaidAmount) || 0) + newPayment.amount,
+          };
+        }
+        return c;
+      });
+      if (candidateUpdated) {
+        saveCandidates(updatedCandidates);
+      }
+    } catch (err) {
+      console.warn('Could not update candidate partnerOfficePaidAmount:', err);
+    }
+  }
+
+  // Backup to Firestore if active
+  try {
+    savePartnerPaymentToFirestore(newPayment);
+    savePartnerLedgerToFirestore(ledgerTx);
+  } catch {
+    // Non-blocking
+  }
+
   addAuditLog(
     newPayment.partnerOfficeId,
     newPayment.partnerOfficeName,
     'Payment Recorded',
-    `Paid ₹${newPayment.amount.toLocaleString('en-IN')} via ${newPayment.paymentMethod} Ref: ${newPayment.referenceNumber}`,
+    `Paid ₹${newPayment.amount.toLocaleString('en-IN')}${candidateRefText} via ${newPayment.paymentMethod} Ref: ${newPayment.referenceNumber}`,
     user
   );
 
-  return { success: true, payment: newPayment, message: `Payment ${payNumber} of ₹${newPayment.amount.toLocaleString('en-IN')} recorded successfully.` };
+  return {
+    success: true,
+    payment: newPayment,
+    message: `Payment ${payNumber} of ₹${newPayment.amount.toLocaleString('en-IN')}${candidateRefText} recorded successfully.`,
+  };
+};
+
+export interface EnrichedCandidatePayment extends PaymentRecord {
+  candidateId: string;
+  candidateTrackingId: string;
+  candidateFullName: string;
+  candidatePassport: string;
+  candidateTrade: string;
+  candidateStatus: string;
+  candidatePackageFee: number;
+  candidateTotalPaid: number;
+  candidateBalanceDue: number;
+}
+
+/**
+ * Fetch all historical payment records (both Candidate Receipts and Partner Vouchers)
+ * Supports optional search filtering by receipt/voucher number, candidate tracking ID, passport, name, or UTR
+ */
+export const fetchOldPaymentRecords = (query?: string): {
+  candidatePayments: EnrichedCandidatePayment[];
+  partnerPayments: PartnerOfficePayment[];
+  totalCandidateAmount: number;
+  totalPartnerAmount: number;
+} => {
+  const candidates = getCandidates();
+  const partnerPayments = getPartnerPayments();
+
+  const allCandidatePayments: EnrichedCandidatePayment[] = [];
+  candidates.forEach((cand) => {
+    if (Array.isArray(cand.paymentHistory)) {
+      cand.paymentHistory.forEach((pmt) => {
+        allCandidatePayments.push({
+          ...pmt,
+          candidateId: cand.id,
+          candidateTrackingId: cand.trackingId,
+          candidateFullName: cand.fullName,
+          candidatePassport: cand.passportNumber,
+          candidateTrade: cand.trade,
+          candidateStatus: cand.status,
+          candidatePackageFee: cand.packageFee,
+          candidateTotalPaid: cand.totalPaid,
+          candidateBalanceDue: cand.balanceDue,
+        });
+      });
+    }
+  });
+
+  const q = (query || '').trim().toLowerCase();
+
+  let filteredCandidatePayments = allCandidatePayments;
+  let filteredPartnerPayments = partnerPayments;
+
+  if (q) {
+    filteredCandidatePayments = allCandidatePayments.filter((p) => {
+      return (
+        (p.receiptNumber && p.receiptNumber.toLowerCase().includes(q)) ||
+        (p.candidateTrackingId && p.candidateTrackingId.toLowerCase().includes(q)) ||
+        (p.candidateFullName && p.candidateFullName.toLowerCase().includes(q)) ||
+        (p.candidatePassport && p.candidatePassport.toLowerCase().includes(q)) ||
+        (p.transactionReference && p.transactionReference.toLowerCase().includes(q)) ||
+        (p.paymentMethod && p.paymentMethod.toLowerCase().includes(q)) ||
+        (p.paymentMode && p.paymentMode.toLowerCase().includes(q)) ||
+        (p.note && p.note.toLowerCase().includes(q)) ||
+        (p.remarks && p.remarks.toLowerCase().includes(q)) ||
+        (p.date && p.date.includes(q)) ||
+        (p.paymentDate && p.paymentDate.includes(q))
+      );
+    });
+
+    filteredPartnerPayments = partnerPayments.filter((p) => {
+      return (
+        (p.paymentNumber && p.paymentNumber.toLowerCase().includes(q)) ||
+        (p.partnerOfficeName && p.partnerOfficeName.toLowerCase().includes(q)) ||
+        (p.referenceNumber && p.referenceNumber.toLowerCase().includes(q)) ||
+        (p.relatedCandidateTrackingId && p.relatedCandidateTrackingId.toLowerCase().includes(q)) ||
+        (p.relatedCandidateName && p.relatedCandidateName.toLowerCase().includes(q)) ||
+        (p.relatedVisaCode && p.relatedVisaCode.toLowerCase().includes(q)) ||
+        (p.relatedBatchCode && p.relatedBatchCode.toLowerCase().includes(q)) ||
+        (p.notes && p.notes.toLowerCase().includes(q)) ||
+        (p.paymentDate && p.paymentDate.includes(q))
+      );
+    });
+  }
+
+  // Sort descending by date
+  filteredCandidatePayments.sort((a, b) => new Date(b.date || b.paymentDate || 0).getTime() - new Date(a.date || a.paymentDate || 0).getTime());
+  filteredPartnerPayments.sort((a, b) => new Date(b.paymentDate || 0).getTime() - new Date(a.paymentDate || 0).getTime());
+
+  const totalCandidateAmount = filteredCandidatePayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const totalPartnerAmount = filteredPartnerPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+  return {
+    candidatePayments: filteredCandidatePayments,
+    partnerPayments: filteredPartnerPayments,
+    totalCandidateAmount,
+    totalPartnerAmount,
+  };
+};
+
+/**
+ * Update an existing candidate payment record
+ * Recalculates totalPaid and balanceDue, and syncs to both localStorage and Firestore
+ */
+export const updateCandidatePaymentRecord = (
+  candidateIdOrTrackingId: string,
+  paymentIdOrReceiptNumber: string,
+  updatedData: Partial<PaymentRecord>,
+  user: string = 'Administrator'
+): {
+  success: boolean;
+  message: string;
+  candidate?: Candidate;
+  payment?: PaymentRecord;
+} => {
+  const candidates = getCandidates();
+  const candIndex = candidates.findIndex(
+    (c) => c.id === candidateIdOrTrackingId || c.trackingId === candidateIdOrTrackingId
+  );
+
+  if (candIndex === -1) {
+    return { success: false, message: `Candidate with ID or Tracking ID '${candidateIdOrTrackingId}' not found.` };
+  }
+
+  const candidate = { ...candidates[candIndex] };
+  const history = [...(candidate.paymentHistory || [])];
+  const pmtIndex = history.findIndex(
+    (p) => p.id === paymentIdOrReceiptNumber || p.receiptNumber === paymentIdOrReceiptNumber
+  );
+
+  if (pmtIndex === -1) {
+    return { success: false, message: `Payment record with ID or Receipt No '${paymentIdOrReceiptNumber}' not found for candidate ${candidate.fullName}.` };
+  }
+
+  const oldPayment = history[pmtIndex];
+  const updatedPayment: PaymentRecord = {
+    ...oldPayment,
+    ...updatedData,
+    amount: Number(updatedData.amount !== undefined ? updatedData.amount : oldPayment.amount),
+    paymentMode: updatedData.paymentMethod || updatedData.paymentMode || oldPayment.paymentMode || oldPayment.paymentMethod,
+    paymentMethod: updatedData.paymentMethod || updatedData.paymentMode || oldPayment.paymentMethod,
+    date: updatedData.date || updatedData.paymentDate || oldPayment.date,
+    paymentDate: updatedData.paymentDate || updatedData.date || oldPayment.paymentDate,
+    remarks: updatedData.remarks || updatedData.note || oldPayment.remarks || oldPayment.note,
+    note: updatedData.note || updatedData.remarks || oldPayment.note,
+    transactionReference: updatedData.transactionReference !== undefined ? updatedData.transactionReference : oldPayment.transactionReference,
+    receivedBy: updatedData.receivedBy || oldPayment.receivedBy || user,
+  };
+
+  history[pmtIndex] = updatedPayment;
+  candidate.paymentHistory = history;
+
+  // Recalculate candidate financials
+  const newTotalPaid = history.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  candidate.totalPaid = newTotalPaid;
+  candidate.balanceDue = Math.max(0, candidate.packageFee - newTotalPaid);
+  candidate.updatedAt = new Date().toISOString();
+
+  // Save updated candidates list
+  candidates[candIndex] = candidate;
+  saveCandidates(candidates);
+  saveCandidateToFirestore(candidate);
+
+  return {
+    success: true,
+    message: `Payment ${updatedPayment.receiptNumber} updated successfully. New candidate balance: ₹${candidate.balanceDue.toLocaleString('en-IN')}.`,
+    candidate,
+    payment: updatedPayment,
+  };
+};
+
+/**
+ * Delete / Void an old candidate payment record
+ */
+export const deleteCandidatePaymentRecord = (
+  candidateIdOrTrackingId: string,
+  paymentIdOrReceiptNumber: string,
+  user: string = 'Administrator'
+): {
+  success: boolean;
+  message: string;
+  candidate?: Candidate;
+} => {
+  const candidates = getCandidates();
+  const candIndex = candidates.findIndex(
+    (c) => c.id === candidateIdOrTrackingId || c.trackingId === candidateIdOrTrackingId
+  );
+
+  if (candIndex === -1) {
+    return { success: false, message: `Candidate not found.` };
+  }
+
+  const candidate = { ...candidates[candIndex] };
+  const history = [...(candidate.paymentHistory || [])];
+  const pmtIndex = history.findIndex(
+    (p) => p.id === paymentIdOrReceiptNumber || p.receiptNumber === paymentIdOrReceiptNumber
+  );
+
+  if (pmtIndex === -1) {
+    return { success: false, message: `Payment record not found.` };
+  }
+
+  const removed = history.splice(pmtIndex, 1)[0];
+  candidate.paymentHistory = history;
+
+  // Recalculate
+  const newTotalPaid = history.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  candidate.totalPaid = newTotalPaid;
+  candidate.balanceDue = Math.max(0, candidate.packageFee - newTotalPaid);
+  candidate.updatedAt = new Date().toISOString();
+
+  candidates[candIndex] = candidate;
+  saveCandidates(candidates);
+  saveCandidateToFirestore(candidate);
+
+  return {
+    success: true,
+    message: `Payment ${removed.receiptNumber} voided/deleted. Recalculated balance: ₹${candidate.balanceDue.toLocaleString('en-IN')}.`,
+    candidate,
+  };
+};
+
+/**
+ * Update an existing Partner Office Payment record
+ * Updates payment, synchronizes ledger entry, recalculates candidate partnerOfficePaidAmount, and syncs to Firestore
+ */
+export const updatePartnerPaymentRecord = (
+  paymentIdOrNumber: string,
+  updatedData: Partial<PartnerOfficePayment>,
+  user: string = 'Administrator'
+): {
+  success: boolean;
+  message: string;
+  payment?: PartnerOfficePayment;
+} => {
+  const currentPayments = getPartnerPayments();
+  const payIdx = currentPayments.findIndex(
+    (p) => p.id === paymentIdOrNumber || p.paymentNumber === paymentIdOrNumber
+  );
+
+  if (payIdx === -1) {
+    return { success: false, message: `Partner payment voucher '${paymentIdOrNumber}' not found.` };
+  }
+
+  const oldPayment = currentPayments[payIdx];
+  const newAmount = Number(updatedData.amount !== undefined ? updatedData.amount : oldPayment.amount);
+
+  const updatedPayment: PartnerOfficePayment = {
+    ...oldPayment,
+    ...updatedData,
+    amount: newAmount,
+  };
+
+  currentPayments[payIdx] = updatedPayment;
+  savePartnerPayments(currentPayments);
+  savePartnerPaymentToFirestore(updatedPayment);
+
+  // Update corresponding ledger entry if found
+  const currentLedger = getPartnerLedgerEntries();
+  const ledgerIdx = currentLedger.findIndex(
+    (tx) =>
+      (tx.referenceNumber && tx.referenceNumber === oldPayment.referenceNumber) ||
+      (tx.notes && tx.notes.includes(oldPayment.paymentNumber)) ||
+      (tx.description && tx.description.includes(oldPayment.paymentNumber))
+  );
+
+  if (ledgerIdx >= 0) {
+    const oldEntry = currentLedger[ledgerIdx];
+    currentLedger[ledgerIdx] = {
+      ...oldEntry,
+      debit: newAmount,
+      payment: newAmount,
+      paymentMethod: updatedPayment.paymentMethod,
+      referenceNumber: updatedPayment.referenceNumber,
+      date: updatedPayment.paymentDate,
+      notes: updatedPayment.notes || oldEntry.notes,
+    };
+    savePartnerLedgerEntries(currentLedger);
+    savePartnerLedgerToFirestore(currentLedger[ledgerIdx]);
+  }
+
+  // If linked to candidate, recalculate candidate's partnerOfficePaidAmount
+  const candidateId = updatedPayment.relatedCandidateId || oldPayment.relatedCandidateId;
+  if (candidateId) {
+    const candidates = getCandidates();
+    const candIdx = candidates.findIndex((c) => c.id === candidateId || c.trackingId === candidateId);
+    if (candIdx >= 0) {
+      // Sum all partner payments for this candidate
+      const totalPaidForCandidate = currentPayments
+        .filter((p) => p.relatedCandidateId === candidates[candIdx].id || p.relatedCandidateTrackingId === candidates[candIdx].trackingId)
+        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+      candidates[candIdx] = {
+        ...candidates[candIdx],
+        partnerOfficePaidAmount: totalPaidForCandidate,
+        updatedAt: new Date().toISOString(),
+      };
+      saveCandidates(candidates);
+      saveCandidateToFirestore(candidates[candIdx]);
+    }
+  }
+
+  addAuditLog(
+    updatedPayment.partnerOfficeId,
+    updatedPayment.partnerOfficeName,
+    'Payment Updated',
+    `Updated payment ${updatedPayment.paymentNumber} to ₹${updatedPayment.amount.toLocaleString('en-IN')} via ${updatedPayment.paymentMethod}`,
+    user
+  );
+
+  return {
+    success: true,
+    message: `Partner payment ${updatedPayment.paymentNumber} updated successfully.`,
+    payment: updatedPayment,
+  };
+};
+
+/**
+ * Delete an existing Partner Office Payment record
+ */
+export const deletePartnerPaymentRecord = (
+  paymentIdOrNumber: string,
+  user: string = 'Administrator'
+): {
+  success: boolean;
+  message: string;
+} => {
+  const currentPayments = getPartnerPayments();
+  const payIdx = currentPayments.findIndex(
+    (p) => p.id === paymentIdOrNumber || p.paymentNumber === paymentIdOrNumber
+  );
+
+  if (payIdx === -1) {
+    return { success: false, message: `Partner payment voucher not found.` };
+  }
+
+  const removed = currentPayments.splice(payIdx, 1)[0];
+  savePartnerPayments(currentPayments);
+  deletePartnerPaymentFromFirestore(removed.id);
+
+  // Reconcile candidate partnerOfficePaidAmount if needed
+  if (removed.relatedCandidateId) {
+    const candidates = getCandidates();
+    const candIdx = candidates.findIndex((c) => c.id === removed.relatedCandidateId);
+    if (candIdx >= 0) {
+      const remainingTotal = currentPayments
+        .filter((p) => p.relatedCandidateId === candidates[candIdx].id)
+        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+      candidates[candIdx] = {
+        ...candidates[candIdx],
+        partnerOfficePaidAmount: remainingTotal,
+        updatedAt: new Date().toISOString(),
+      };
+      saveCandidates(candidates);
+      saveCandidateToFirestore(candidates[candIdx]);
+    }
+  }
+
+  addAuditLog(
+    removed.partnerOfficeId,
+    removed.partnerOfficeName,
+    'Payment Deleted',
+    `Deleted payment ${removed.paymentNumber} of ₹${removed.amount.toLocaleString('en-IN')}`,
+    user
+  );
+
+  return {
+    success: true,
+    message: `Partner payment ${removed.paymentNumber} deleted successfully.`,
+  };
 };
 
 export const getSliders = (): SliderBanner[] => {

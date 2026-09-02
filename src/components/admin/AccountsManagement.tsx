@@ -8,25 +8,40 @@ import {
   TrendingUp,
   Search,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Edit3,
+  Receipt,
+  CloudDownload
 } from 'lucide-react';
 import { Candidate, PaymentRecord, PartnerOffice, AgencyInfo } from '../../types';
-import { getAgencyInfo } from '../../lib/storage';
+import { getAgencyInfo, getCandidates } from '../../lib/storage';
 import { generatePaymentReceiptPdf } from '../../lib/pdfGenerator';
+import { FetchUpdatePaymentModal } from './FetchUpdatePaymentModal';
 
 interface AccountsManagementProps {
   candidates: Candidate[];
   partners: PartnerOffice[];
   agencyInfo?: AgencyInfo;
+  onRefreshCandidates?: () => void;
 }
 
 export const AccountsManagement: React.FC<AccountsManagementProps> = ({
   candidates,
   partners,
   agencyInfo: propAgency,
+  onRefreshCandidates,
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'due' | 'paid'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [receiptSearch, setReceiptSearch] = useState('');
+
+  // Payment Hub Modal State
+  const [isFetchUpdateModalOpen, setIsFetchUpdateModalOpen] = useState(false);
+  const [selectedCandidatePaymentForEdit, setSelectedCandidatePaymentForEdit] = useState<{
+    candidateId: string;
+    paymentId: string;
+  } | null>(null);
+  const [initialSearchTerm, setInitialSearchTerm] = useState('');
 
   const agency = propAgency || getAgencyInfo();
 
@@ -52,6 +67,19 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
     return timeB - timeA;
   });
 
+  // Filtered payments by receipt search
+  const filteredReceipts = allPayments.filter(({ payment, candidate }) => {
+    if (!receiptSearch.trim()) return true;
+    const q = receiptSearch.toLowerCase();
+    return (
+      (payment.receiptNumber && payment.receiptNumber.toLowerCase().includes(q)) ||
+      (candidate.fullName && candidate.fullName.toLowerCase().includes(q)) ||
+      (candidate.trackingId && candidate.trackingId.toLowerCase().includes(q)) ||
+      (payment.transactionReference && payment.transactionReference.toLowerCase().includes(q)) ||
+      (payment.paymentMethod && payment.paymentMethod.toLowerCase().includes(q))
+    );
+  });
+
   const totalPackageVolume = safeCandidates.reduce((acc, c) => acc + (Number(c?.packageFee) || 0), 0);
   const totalCollected = safeCandidates.reduce((acc, c) => acc + (Number(c?.totalPaid) || 0), 0);
   const totalOutstanding = safeCandidates.reduce((acc, c) => acc + (Number(c?.balanceDue) || 0), 0);
@@ -71,6 +99,24 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
     return matchesSearch;
   });
 
+  const handleOpenEditPayment = (candidateId: string, paymentId: string) => {
+    setSelectedCandidatePaymentForEdit({ candidateId, paymentId });
+    setInitialSearchTerm('');
+    setIsFetchUpdateModalOpen(true);
+  };
+
+  const handleOpenGeneralFetchModal = () => {
+    setSelectedCandidatePaymentForEdit(null);
+    setInitialSearchTerm('');
+    setIsFetchUpdateModalOpen(true);
+  };
+
+  const handlePaymentUpdated = () => {
+    if (onRefreshCandidates) {
+      onRefreshCandidates();
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in text-slate-900">
       {/* Header */}
@@ -82,6 +128,18 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
           <p className="text-xs text-slate-500">
             Realtime revenue audit, pending candidate balances, and sub-agent commission reports.
           </p>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2.5">
+          <button
+            id="accounts-fetch-update-payment-btn"
+            onClick={handleOpenGeneralFetchModal}
+            className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow flex items-center gap-2 transition-transform active:scale-95"
+          >
+            <Edit3 className="w-4 h-4" />
+            <span>Fetch & Update Old Payment Record</span>
+          </button>
         </div>
       </div>
 
@@ -205,11 +263,26 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
 
       {/* Payment Receipts History */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-200">
-          <h3 className="font-bold text-base text-[#0F1E36] font-display">
-            Recent Payment Receipts Issued
-          </h3>
-          <p className="text-xs text-slate-500">1-click reprint of official payment voucher with QR code</p>
+        <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-base text-[#0F1E36] font-display">
+              Recent Payment Receipts Issued
+            </h3>
+            <p className="text-xs text-slate-500">Search, edit values, reprint official payment vouchers with QR code</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search receipt #, candidate, or UTR..."
+                value={receiptSearch}
+                onChange={(e) => setReceiptSearch(e.target.value)}
+                className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-1 focus:ring-amber-500 w-56 sm:w-64"
+              />
+            </div>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -222,11 +295,11 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                 <th className="py-3 px-4">Mode</th>
                 <th className="py-3 px-4">Txn Ref</th>
                 <th className="py-3 px-4">Amount</th>
-                <th className="py-3 px-4 text-right">Reprint Receipt</th>
+                <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {allPayments.map(({ payment, candidate }) => (
+              {filteredReceipts.map(({ payment, candidate }) => (
                 <tr key={payment.id} className="hover:bg-slate-50">
                   <td className="py-3 px-4 font-mono font-bold text-amber-900">{payment.receiptNumber}</td>
                   <td className="py-3 px-4">
@@ -243,10 +316,20 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                   <td className="py-3 px-4 font-black text-emerald-800 text-sm">
                     ₹{(Number(payment.amount) || 0).toLocaleString('en-IN')}
                   </td>
-                  <td className="py-3 px-4 text-right">
+                  <td className="py-3 px-4 text-right whitespace-nowrap">
                     <button
+                      id={`receipt-update-btn-${payment.id}`}
+                      onClick={() => handleOpenEditPayment(candidate.id, payment.id)}
+                      className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-bold inline-flex items-center gap-1 shadow-2xs mr-2 transition-all active:scale-95"
+                      title="Update or void payment record"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      <span>Update</span>
+                    </button>
+                    <button
+                      id={`receipt-print-btn-${payment.id}`}
                       onClick={() => generatePaymentReceiptPdf(payment, candidate, agency)}
-                      className="px-2.5 py-1 rounded bg-[#0F1E36] hover:bg-[#1A3258] text-white text-[10px] font-bold inline-flex items-center gap-1"
+                      className="px-2.5 py-1 rounded bg-[#0F1E36] hover:bg-[#1A3258] text-white text-[10px] font-bold inline-flex items-center gap-1 transition-all"
                     >
                       <Printer className="w-3 h-3 text-amber-400" />
                       <span>Print PDF</span>
@@ -254,10 +337,25 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                   </td>
                 </tr>
               ))}
+              {filteredReceipts.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-slate-500">
+                    No payment receipts found matching your search.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Fetch & Update Old Payment Modal */}
+      <FetchUpdatePaymentModal
+        isOpen={isFetchUpdateModalOpen}
+        onClose={() => setIsFetchUpdateModalOpen(false)}
+        initialCandidatePayment={selectedCandidatePaymentForEdit || undefined}
+        onPaymentUpdated={handlePaymentUpdated}
+      />
     </div>
   );
 };
