@@ -78,6 +78,17 @@ export const FetchUpdatePaymentModal: React.FC<FetchUpdatePaymentModalProps> = (
 
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  // In-app deletion confirmation state (safe in mobile iframes)
+  const [deleteConfirmState, setDeleteConfirmState] = useState<{
+    type: 'candidate' | 'partner';
+    id: string;
+    candidateId?: string;
+    reference: string;
+    amount: number;
+    party: string;
+  } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const agency: AgencyInfo = useMemo(() => getAgencyInfo(), []);
 
   // Fetch local data
@@ -257,42 +268,94 @@ export const FetchUpdatePaymentModal: React.FC<FetchUpdatePaymentModalProps> = (
 
   const handleDeleteCandidatePayment = () => {
     if (!selectedCandidatePayment) return;
-    const confirmDelete = window.confirm(
-      `Are you sure you want to void and permanently delete receipt ${selectedCandidatePayment.receiptNumber} of ₹${selectedCandidatePayment.amount.toLocaleString('en-IN')} for ${selectedCandidatePayment.candidateFullName}?\n\nThe candidate's outstanding balance will be automatically recalculated.`
-    );
-    if (!confirmDelete) return;
-
-    const res = deleteCandidatePaymentRecord(
-      selectedCandidatePayment.candidateId,
-      selectedCandidatePayment.id,
-      'Administrator'
-    );
-
-    if (res.success) {
-      alert(res.message);
-      setSelectedCandidatePayment(null);
-      refreshLocalRecords(searchQuery);
-      if (onPaymentUpdated) onPaymentUpdated();
-    } else {
-      setFeedback({ type: 'error', message: res.message });
-    }
+    setDeleteConfirmState({
+      type: 'candidate',
+      candidateId: selectedCandidatePayment.candidateId,
+      id: selectedCandidatePayment.id,
+      reference: selectedCandidatePayment.receiptNumber || 'Receipt',
+      amount: selectedCandidatePayment.amount,
+      party: selectedCandidatePayment.candidateFullName,
+    });
   };
 
   const handleDeletePartnerPayment = () => {
     if (!selectedPartnerPayment) return;
-    const confirmDelete = window.confirm(
-      `Are you sure you want to void partner voucher ${selectedPartnerPayment.paymentNumber} of ₹${selectedPartnerPayment.amount.toLocaleString('en-IN')}?\n\nThe ledger balance will be updated automatically.`
-    );
-    if (!confirmDelete) return;
+    setDeleteConfirmState({
+      type: 'partner',
+      id: selectedPartnerPayment.id,
+      reference: selectedPartnerPayment.paymentNumber || 'Voucher',
+      amount: selectedPartnerPayment.amount,
+      party: selectedPartnerPayment.partnerOfficeName,
+    });
+  };
 
-    const res = deletePartnerPaymentRecord(selectedPartnerPayment.id, 'Administrator');
-    if (res.success) {
-      alert(res.message);
-      setSelectedPartnerPayment(null);
-      refreshLocalRecords(searchQuery);
-      if (onPaymentUpdated) onPaymentUpdated();
-    } else {
-      setFeedback({ type: 'error', message: res.message });
+  const handleDirectDeleteCandidatePayment = (
+    candidateId: string,
+    paymentId: string,
+    receiptNumber: string,
+    amount: number,
+    candidateName: string
+  ) => {
+    setDeleteConfirmState({
+      type: 'candidate',
+      candidateId,
+      id: paymentId,
+      reference: receiptNumber,
+      amount,
+      party: candidateName,
+    });
+  };
+
+  const handleDirectDeletePartnerPayment = (
+    paymentId: string,
+    voucherNumber: string,
+    amount: number,
+    partnerName: string
+  ) => {
+    setDeleteConfirmState({
+      type: 'partner',
+      id: paymentId,
+      reference: voucherNumber,
+      amount,
+      party: partnerName,
+    });
+  };
+
+  const executeModalDelete = async () => {
+    if (!deleteConfirmState) return;
+    setIsDeleting(true);
+    try {
+      if (deleteConfirmState.type === 'candidate' && deleteConfirmState.candidateId) {
+        const res = deleteCandidatePaymentRecord(
+          deleteConfirmState.candidateId,
+          deleteConfirmState.id,
+          'Administrator'
+        );
+        if (res.success) {
+          setFeedback({ type: 'success', message: `${res.message} Synchronized with Supabase.` });
+          setSelectedCandidatePayment(null);
+          refreshLocalRecords(searchQuery);
+          if (onPaymentUpdated) onPaymentUpdated();
+        } else {
+          setFeedback({ type: 'error', message: res.message || 'Failed to delete payment record.' });
+        }
+      } else if (deleteConfirmState.type === 'partner') {
+        const res = deletePartnerPaymentRecord(deleteConfirmState.id, 'Administrator');
+        if (res.success) {
+          setFeedback({ type: 'success', message: `${res.message} Synchronized with Supabase.` });
+          setSelectedPartnerPayment(null);
+          refreshLocalRecords(searchQuery);
+          if (onPaymentUpdated) onPaymentUpdated();
+        } else {
+          setFeedback({ type: 'error', message: res.message || 'Failed to delete partner payment record.' });
+        }
+      }
+    } catch (err: any) {
+      console.error('Error deleting payment in modal:', err);
+      setFeedback({ type: 'error', message: `Delete failed: ${err?.message || 'Database synchronization failure'}` });
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirmState(null);
     }
   };
 
@@ -861,10 +924,28 @@ export const FetchUpdatePaymentModal: React.FC<FetchUpdatePaymentModalProps> = (
                           <button
                             id={`edit-candidate-payment-btn-${p.id}`}
                             onClick={() => selectForCandidateEdit(p)}
-                            className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1 shadow-2xs"
+                            className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1 shadow-2xs"
+                            title="Edit candidate payment record"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
-                            <span>Update</span>
+                            <span>Edit</span>
+                          </button>
+                          <button
+                            id={`delete-candidate-payment-btn-${p.id}`}
+                            onClick={() =>
+                              handleDirectDeleteCandidatePayment(
+                                p.candidateId,
+                                p.id,
+                                p.receiptNumber || 'Receipt',
+                                Number(p.amount) || 0,
+                                p.candidateFullName
+                              )
+                            }
+                            className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors"
+                            title="Delete payment receipt and recalculate candidate balance"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                            <span>Delete</span>
                           </button>
                         </div>
                       </div>
@@ -917,10 +998,27 @@ export const FetchUpdatePaymentModal: React.FC<FetchUpdatePaymentModalProps> = (
                           <button
                             id={`edit-partner-payment-btn-${p.id}`}
                             onClick={() => selectForPartnerEdit(p)}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1 shadow-2xs"
+                            className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1 shadow-2xs"
+                            title="Edit partner payment voucher"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
-                            <span>Update</span>
+                            <span>Edit</span>
+                          </button>
+                          <button
+                            id={`delete-partner-payment-btn-${p.id}`}
+                            onClick={() =>
+                              handleDirectDeletePartnerPayment(
+                                p.id,
+                                p.paymentNumber || 'Voucher',
+                                Number(p.amount) || 0,
+                                p.partnerOfficeName
+                              )
+                            }
+                            className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors"
+                            title="Delete partner payment voucher and update partner ledger"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                            <span>Delete</span>
                           </button>
                         </div>
                       </div>
@@ -954,6 +1052,62 @@ export const FetchUpdatePaymentModal: React.FC<FetchUpdatePaymentModalProps> = (
           </button>
         </div>
       </div>
+
+      {/* Confirmation Sub-Modal for Deletion */}
+      {deleteConfirmState && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-sm w-full p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h4 className="font-extrabold text-slate-900 text-base">
+                  {deleteConfirmState.type === 'candidate' ? 'Delete Payment Receipt?' : 'Delete Remittance Voucher?'}
+                </h4>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Are you sure you want to delete this payment? Outstanding balances will be recalculated immediately.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Ref:</span>
+                <span className="font-mono font-bold text-slate-800">{deleteConfirmState.reference}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Party:</span>
+                <span className="font-bold text-slate-800 truncate max-w-[180px]">{deleteConfirmState.party}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-200">
+                <span className="text-slate-700 font-bold">Amount:</span>
+                <span className="font-mono font-black text-rose-700">₹{deleteConfirmState.amount.toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setDeleteConfirmState(null)}
+                className="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={executeModalDelete}
+                className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-rose-600/20 transition-all disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeleting ? 'Deleting...' : 'Delete'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

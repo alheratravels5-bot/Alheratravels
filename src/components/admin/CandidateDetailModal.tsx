@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   User,
@@ -30,7 +30,14 @@ import {
   Edit3
 } from 'lucide-react';
 import { Candidate, CandidateStatus, PaymentRecord, AgencyInfo, PartnerOfficePayment, PartnerOffice } from '../../types';
-import { getAgencyInfo, getPartnerPayments, getPartners, getCandidates } from '../../lib/storage';
+import {
+  getAgencyInfo,
+  getPartnerPayments,
+  getPartners,
+  getCandidates,
+  deleteCandidatePaymentRecord,
+  deletePartnerPaymentRecord
+} from '../../lib/storage';
 import {
   generateSelectionLetterPdf,
   generatePaymentReceiptPdf,
@@ -82,7 +89,14 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
   const [candidatePaymentToEdit, setCandidatePaymentToEdit] = useState<{ candidateId: string; paymentId: string } | null>(null);
   const [partnerPaymentToEdit, setPartnerPaymentToEdit] = useState<string | null>(null);
 
-  if (!isOpen || !candidate) return null;
+  // In-app delete confirmation state
+  const [deletePaymentConfirm, setDeletePaymentConfirm] = useState<{
+    type: 'candidate' | 'partner';
+    id: string;
+    reference: string;
+    amount: number;
+  } | null>(null);
+  const [isDeletingPayment, setIsDeletingPayment] = useState(false);
 
   const agency = propAgency || getAgencyInfo();
 
@@ -93,6 +107,57 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
       if (refreshed) {
         onUpdateCandidate(refreshed);
       }
+    }
+  };
+
+  const handleDeleteCandidatePayment = (paymentId: string, receiptNumber: string, amount: number) => {
+    if (!candidate) return;
+    setDeletePaymentConfirm({
+      type: 'candidate',
+      id: paymentId,
+      reference: receiptNumber,
+      amount,
+    });
+  };
+
+  const handleDeletePartnerPayment = (paymentId: string, voucherNumber: string, amount: number) => {
+    if (!candidate) return;
+    setDeletePaymentConfirm({
+      type: 'partner',
+      id: paymentId,
+      reference: voucherNumber,
+      amount,
+    });
+  };
+
+  const executeCandidateDetailDelete = async () => {
+    if (!deletePaymentConfirm || !candidate) return;
+    setIsDeletingPayment(true);
+    try {
+      if (deletePaymentConfirm.type === 'candidate') {
+        const res = deleteCandidatePaymentRecord(candidate.id, deletePaymentConfirm.id, 'Administrator');
+        if (res.success) {
+          const freshCandidates = getCandidates();
+          const refreshed = freshCandidates.find((c) => c.id === candidate.id);
+          if (refreshed) {
+            onUpdateCandidate(refreshed);
+          }
+        }
+      } else if (deletePaymentConfirm.type === 'partner') {
+        const res = deletePartnerPaymentRecord(deletePaymentConfirm.id, 'Administrator');
+        if (res.success) {
+          const freshCandidates = getCandidates();
+          const refreshed = freshCandidates.find((c) => c.id === candidate.id);
+          if (refreshed) {
+            onUpdateCandidate(refreshed);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Exception in candidate payment deletion:', e);
+    } finally {
+      setIsDeletingPayment(false);
+      setDeletePaymentConfirm(null);
     }
   };
 
@@ -118,6 +183,20 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
     const allPartners = getPartners();
     return allPartners.find((p) => p.id === candidate.partnerOfficeId) || null;
   }, [candidate?.partnerOfficeId]);
+
+  // Synchronize flight details when candidate changes
+  useEffect(() => {
+    if (candidate?.flightDetails) {
+      setAirline(candidate.flightDetails.airline || 'Saudi Arabian Airlines');
+      setFlightNumber(candidate.flightDetails.flightNumber || 'SV-759');
+      setDepartureDate(candidate.flightDetails.departureDate || '2025-10-20');
+      setDepartureCity(candidate.flightDetails.departureCity || 'Mumbai (BOM)');
+      setArrivalCity(candidate.flightDetails.arrivalCity || 'Riyadh (RUH)');
+      setPnr(candidate.flightDetails.pnr || 'SV9871');
+    }
+  }, [candidate]);
+
+  if (!isOpen || !candidate) return null;
 
   const handleAdvanceStatus = (e: React.FormEvent) => {
     e.preventDefault();
@@ -681,17 +760,32 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
                           <span className="text-[10px] text-emerald-700 font-bold block">{p.receiptNumber}</span>
                         </div>
                         <button
-                          id={`update-candidate-receipt-btn-${p.id}`}
+                          id={`edit-candidate-receipt-btn-${p.id}`}
                           onClick={() => {
                             setCandidatePaymentToEdit({ candidateId: candidate.id, paymentId: p.id });
                             setPartnerPaymentToEdit(null);
                             setIsFetchUpdateModalOpen(true);
                           }}
                           className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-bold flex items-center gap-1 shadow-xs transition-transform active:scale-95"
-                          title="Edit payment details or void receipt"
+                          title="Edit payment details"
                         >
                           <Edit3 className="w-3 h-3" />
-                          <span>Update</span>
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          id={`delete-candidate-receipt-btn-${p.id}`}
+                          onClick={() =>
+                            handleDeleteCandidatePayment(
+                              p.id,
+                              p.receiptNumber || 'Receipt',
+                              Number(p.amount) || 0
+                            )
+                          }
+                          className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 text-[11px] font-bold flex items-center gap-1 shadow-xs transition-transform active:scale-95"
+                          title="Delete payment receipt and recalculate balance"
+                        >
+                          <Trash2 className="w-3 h-3 text-rose-600" />
+                          <span>Delete</span>
                         </button>
                         <button
                           onClick={() => generatePaymentReceiptPdf(p, candidate, agency)}
@@ -763,18 +857,34 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
                             <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700">
                               ₹{p.amount.toLocaleString('en-IN')}
                             </td>
-                            <td className="py-2 px-3 text-right">
+                            <td className="py-2 px-3 text-right whitespace-nowrap">
                               <button
-                                id={`update-partner-voucher-btn-${p.id}`}
+                                id={`edit-partner-voucher-btn-${p.id}`}
                                 onClick={() => {
                                   setCandidatePaymentToEdit(null);
                                   setPartnerPaymentToEdit(p.id);
                                   setIsFetchUpdateModalOpen(true);
                                 }}
-                                className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-bold inline-flex items-center gap-1 shadow-xs transition-transform active:scale-95"
+                                className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-bold inline-flex items-center gap-1 shadow-xs transition-transform active:scale-95 mr-1"
+                                title="Edit voucher details"
                               >
                                 <Edit3 className="w-2.5 h-2.5" />
-                                <span>Update</span>
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                id={`delete-partner-voucher-btn-${p.id}`}
+                                onClick={() =>
+                                  handleDeletePartnerPayment(
+                                    p.id,
+                                    p.paymentNumber || 'Voucher',
+                                    Number(p.amount) || 0
+                                  )
+                                }
+                                className="px-2 py-0.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 text-[10px] font-bold inline-flex items-center gap-1 shadow-xs transition-transform active:scale-95"
+                                title="Delete voucher and update partner ledger"
+                              >
+                                <Trash2 className="w-2.5 h-2.5 text-rose-600" />
+                                <span>Delete</span>
                               </button>
                             </td>
                           </tr>
@@ -913,6 +1023,58 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
                   <span>Save & Print PDF Receipt</span>
                 </button>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Confirmation Modal */}
+        {deletePaymentConfirm && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-sm w-full p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div className="flex-1">
+                  <h4 className="font-extrabold text-slate-900 text-base">
+                    {deletePaymentConfirm.type === 'candidate' ? 'Delete Payment Receipt?' : 'Delete Remittance Voucher?'}
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Are you sure you want to delete {deletePaymentConfirm.reference}? Balances will be recalculated immediately.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 rounded-lg p-3 border border-slate-200 text-xs space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Ref:</span>
+                  <span className="font-mono font-bold text-slate-800">{deletePaymentConfirm.reference}</span>
+                </div>
+                <div className="flex justify-between pt-1 border-t border-slate-200">
+                  <span className="text-slate-700 font-bold">Amount:</span>
+                  <span className="font-mono font-black text-rose-700">₹{deletePaymentConfirm.amount.toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isDeletingPayment}
+                  onClick={() => setDeletePaymentConfirm(null)}
+                  className="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingPayment}
+                  onClick={executeCandidateDetailDelete}
+                  className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-rose-600/20 transition-all disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{isDeletingPayment ? 'Deleting...' : 'Delete'}</span>
+                </button>
+              </div>
             </div>
           </div>
         )}

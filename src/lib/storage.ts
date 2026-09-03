@@ -24,7 +24,7 @@ import {
 } from '../types';
 import { computePartnerFinancials, computeRunningLedger } from './partnerCalculations';
 import { enrichAllJobsWithMetrics, enrichJobWithMetrics, createJobStatusHistoryEvent, computeJobCandidateMetrics } from './jobCalculations';
-import { getSupabase, syncCollectionToSupabase } from './supabase';
+import { getSupabase, syncCollectionToSupabase, deleteRecordFromSupabase } from './supabase';
 import { getAuthUsers, saveAuthUsers } from './auth';
 import {
   saveCandidateToFirestore,
@@ -2856,6 +2856,11 @@ export const updateCandidatePaymentRecord = (
   saveCandidates(candidates);
   saveCandidateToFirestore(candidate);
 
+  // Sync partner offices if candidate is attached to a partner
+  if (candidate.partnerOfficeId) {
+    savePartners(getPartners());
+  }
+
   return {
     success: true,
     message: `Payment ${updatedPayment.receiptNumber} updated successfully. New candidate balance: ₹${candidate.balanceDue.toLocaleString('en-IN')}.`,
@@ -2907,6 +2912,11 @@ export const deleteCandidatePaymentRecord = (
   candidates[candIndex] = candidate;
   saveCandidates(candidates);
   saveCandidateToFirestore(candidate);
+
+  // Sync partner offices if candidate is attached to a partner
+  if (candidate.partnerOfficeId) {
+    savePartners(getPartners());
+  }
 
   return {
     success: true,
@@ -2995,6 +3005,9 @@ export const updatePartnerPaymentRecord = (
     }
   }
 
+  // Update partners totals and sync to Supabase
+  savePartners(getPartners());
+
   addAuditLog(
     updatedPayment.partnerOfficeId,
     updatedPayment.partnerOfficeName,
@@ -3031,7 +3044,21 @@ export const deletePartnerPaymentRecord = (
 
   const removed = currentPayments.splice(payIdx, 1)[0];
   savePartnerPayments(currentPayments);
+  deleteRecordFromSupabase('partner_payments', 'id', removed.id);
   deletePartnerPaymentFromFirestore(removed.id);
+
+  // Reconcile and remove corresponding ledger entry
+  const currentLedger = getPartnerLedgerEntries();
+  const ledgerIdx = currentLedger.findIndex(
+    (tx) =>
+      (tx.referenceNumber && tx.referenceNumber === removed.referenceNumber) ||
+      (tx.notes && tx.notes.includes(removed.paymentNumber)) ||
+      (tx.description && tx.description.includes(removed.paymentNumber))
+  );
+  if (ledgerIdx >= 0) {
+    currentLedger.splice(ledgerIdx, 1);
+    savePartnerLedgerEntries(currentLedger);
+  }
 
   // Reconcile candidate partnerOfficePaidAmount if needed
   if (removed.relatedCandidateId) {
@@ -3051,6 +3078,9 @@ export const deletePartnerPaymentRecord = (
       saveCandidateToFirestore(candidates[candIdx]);
     }
   }
+
+  // Update partners totals and sync to Supabase
+  savePartners(getPartners());
 
   addAuditLog(
     removed.partnerOfficeId,

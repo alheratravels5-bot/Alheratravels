@@ -32,7 +32,8 @@ import {
   FileText,
   X,
   User,
-  Edit3
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import {
   PartnerOffice,
@@ -44,7 +45,7 @@ import {
   PartnerAuditLog,
   AgencyInfo
 } from '../../../types';
-import { getAgencyInfo } from '../../../lib/storage';
+import { getAgencyInfo, deletePartnerPaymentRecord } from '../../../lib/storage';
 import { computePartnerFinancials, computeRunningLedger } from '../../../lib/partnerCalculations';
 import { generatePartnerStatementPdf } from '../../../lib/pdfGenerator';
 import { PartnerLedgerModal } from './PartnerLedgerModal';
@@ -91,6 +92,42 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
   // State for Fetch & Update Payment Modal
   const [isFetchUpdateModalOpen, setIsFetchUpdateModalOpen] = useState(false);
   const [selectedPartnerPaymentForEdit, setSelectedPartnerPaymentForEdit] = useState<string | null>(null);
+
+  // In-app delete confirmation state (mobile & iframe safe)
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{
+    paymentId: string;
+    paymentNumber: string;
+    amount: number;
+  } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDeletePartnerPayment = (paymentId: string, paymentNumber: string, amount: number) => {
+    setDeleteConfirmTarget({
+      paymentId,
+      paymentNumber,
+      amount,
+    });
+  };
+
+  const executeDeletePartnerPayment = async () => {
+    if (!deleteConfirmTarget) return;
+    setIsDeleting(true);
+    try {
+      const res = deletePartnerPaymentRecord(deleteConfirmTarget.paymentId, 'Administrator');
+      if (res.success) {
+        if (onRefreshData) {
+          onRefreshData();
+        }
+      } else {
+        console.error('Failed to delete partner payment:', res.message);
+      }
+    } catch (err) {
+      console.error('Error during partner payment deletion:', err);
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirmTarget(null);
+    }
+  };
 
   // Filter criteria
   const [visaSearch, setVisaSearch] = useState('');
@@ -1415,18 +1452,33 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
                         <td className="py-3 px-4 text-right font-mono font-extrabold text-emerald-700 text-sm">
                           ₹{p.amount.toLocaleString('en-IN')}
                         </td>
-                        <td className="py-3 px-4 text-right">
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
                           <button
-                            id={`partner-payment-update-btn-${p.id}`}
+                            id={`partner-payment-edit-btn-${p.id}`}
                             onClick={() => {
                               setSelectedPartnerPaymentForEdit(p.id);
                               setIsFetchUpdateModalOpen(true);
                             }}
-                            className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-bold inline-flex items-center gap-1 shadow-2xs transition-all active:scale-95"
-                            title="Update payment amount, date, or void this record"
+                            className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-bold inline-flex items-center gap-1 shadow-2xs transition-all active:scale-95 mr-1.5"
+                            title="Edit payment amount, date, or references"
                           >
                             <Edit3 className="w-3 h-3" />
-                            <span>Update</span>
+                            <span>Edit</span>
+                          </button>
+                          <button
+                            id={`partner-payment-delete-btn-${p.id}`}
+                            onClick={() =>
+                              handleDeletePartnerPayment(
+                                p.id,
+                                p.paymentNumber || 'Voucher',
+                                Number(p.amount) || 0
+                              )
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 text-[10px] font-bold inline-flex items-center gap-1 shadow-2xs transition-all active:scale-95"
+                            title="Delete partner payment voucher and update partner ledger"
+                          >
+                            <Trash2 className="w-3 h-3 text-rose-600" />
+                            <span>Delete</span>
                           </button>
                         </td>
                       </tr>
@@ -1761,6 +1813,56 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
           </div>
         );
       })()}
+
+      {/* In-App Delete Confirmation Modal */}
+      {deleteConfirmTarget && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-sm w-full p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h4 className="font-extrabold text-slate-900 text-base">Delete Partner Voucher?</h4>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Are you sure you want to delete {deleteConfirmTarget.paymentNumber}? The partner ledger will be recalculated immediately.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Voucher:</span>
+                <span className="font-mono font-bold text-slate-800">{deleteConfirmTarget.paymentNumber}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-200">
+                <span className="text-slate-700 font-bold">Amount:</span>
+                <span className="font-mono font-black text-rose-700">₹{deleteConfirmTarget.amount.toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setDeleteConfirmTarget(null)}
+                className="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={executeDeletePartnerPayment}
+                className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-rose-600/20 transition-all disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeleting ? 'Deleting...' : 'Delete'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Fetch & Update Payment Modal */}
       <FetchUpdatePaymentModal
