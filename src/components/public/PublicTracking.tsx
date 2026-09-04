@@ -419,12 +419,15 @@ export const PublicTracking: React.FC<PublicTrackingProps> = ({
                   <span className="font-medium text-slate-800">{searchedCandidate.fatherName || '—'}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 font-semibold block">Passport Expiry:</span>
-                  <span className="font-medium text-slate-800">{searchedCandidate.passportExpiry || '—'}</span>
+                  <span className="text-slate-500 font-semibold block">Selection City:</span>
+                  <span className="font-semibold text-indigo-700 flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-indigo-600 inline shrink-0" />
+                    <span>{searchedCandidate.selectionCity || 'Direct Selection'}</span>
+                  </span>
                 </div>
                 <div>
-                  <span className="text-slate-500 font-semibold block">MOFA Number:</span>
-                  <span className="font-mono font-medium text-slate-800">{searchedCandidate.mofaNumber || 'In Process'}</span>
+                  <span className="text-slate-500 font-semibold block">Passport Expiry:</span>
+                  <span className="font-medium text-slate-800">{searchedCandidate.passportExpiry || '—'}</span>
                 </div>
                 <div>
                   <span className="text-slate-500 font-semibold block">Partner Office / Agent:</span>
@@ -605,6 +608,13 @@ export const PublicTracking: React.FC<PublicTrackingProps> = ({
                         </div>
 
                         <p className="text-xs text-slate-600 mt-1">{step.description}</p>
+
+                        {step.key === 'interview_selected' && (historyMatch?.selectionCity || searchedCandidate.selectionCity) && (
+                          <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-semibold">
+                            <MapPin className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Selection City: <strong>{historyMatch?.selectionCity || searchedCandidate.selectionCity}</strong></span>
+                          </div>
+                        )}
 
                         {historyMatch && (
                           <div className="mt-2 pt-2 border-t border-slate-200/80 text-xs text-slate-700">

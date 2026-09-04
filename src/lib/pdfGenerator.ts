@@ -129,7 +129,7 @@ export function generateEmploymentContractPdf(candidate: Candidate, agencyInfo?:
     ['Principal Sponsor / Company:', candidate.sponsorName || 'Saudi Arabia Enterprise Co.', 'Work Location:', 'Kingdom of Saudi Arabia (KSA)'],
     ['Visa Number (Issued):', candidate.visaNumber || 'SAU-VISA-ISSUED-OK', 'Wakala Reference:', candidate.wakalaNumber || 'WKL-2025-ALLOT'],
     ['Visa Type / Category:', candidate.visaCategory || 'Work Employment Visa', 'MOFA / Enjaz Ref:', candidate.mofaNumber || 'MOFA-VERIFIED-981'],
-    ['Contract Duration:', '2 Years (Renewable by mutual accord)', 'Probation Period:', '90 Days (As per Saudi Labor Law)'],
+    ['Contract Duration:', '2 Years (Renewable by accord)', 'Selection City / Hub:', candidate.selectionCity ? `${candidate.selectionCity}` : 'Mumbai HQ Venue'],
   ];
 
   yPos = spBoxY + 12;
@@ -564,9 +564,18 @@ export function generatePaymentReceiptPdf(
   doc.setFontSize(15);
   doc.text(agency.name, 10, 11);
 
+  const isDirect = (paymentOrCandidate && 'isDirectPayment' in paymentOrCandidate && paymentOrCandidate.isDirectPayment) ||
+    String(receiptNo).includes('DIR');
+
   doc.setFontSize(7.5);
   doc.setTextColor(212, 175, 55);
-  doc.text('OFFICIAL PAYMENT RECEIPT & ACKNOWLEDGMENT', 10, 17);
+  doc.text(
+    isDirect
+      ? 'DIRECT CANDIDATE PAYMENT RECEIPT & ACKNOWLEDGMENT'
+      : 'OFFICIAL PAYMENT RECEIPT & ACKNOWLEDGMENT',
+    10,
+    17
+  );
 
   doc.setTextColor(200, 215, 230);
   doc.setFontSize(7);
@@ -737,6 +746,7 @@ export function generateSelectionLetterPdf(candidate: Candidate, agencyInfo?: Ag
   const empFields = [
     ['Designation / Trade:', candidate.trade.toUpperCase()],
     ['Sponsor / Principal Employer:', candidate.sponsorName || 'Saudi Arabia Enterprise Co.'],
+    ['Interview & Selection City:', candidate.selectionCity ? `${candidate.selectionCity} (Official Selection Venue)` : 'Mumbai Central / Client Trade Test Camp'],
     ['Saudi Job ID / Link:', candidate.jobTitle || 'Overseas Direct Allocation'],
     ['Wakala / Visa Status:', `${candidate.status.toUpperCase()} (Wakala No: ${candidate.wakalaNumber || 'WKL-2025-ALLOT'})`],
     ['Visa / MOFA Number:', `${candidate.visaNumber || 'Under Embassy Stamping'} (MOFA: ${candidate.mofaNumber || 'MOFA-SAU-ALLOT'})`],
@@ -744,10 +754,11 @@ export function generateSelectionLetterPdf(candidate: Candidate, agencyInfo?: Ag
     ['Flight & Departure Hub:', candidate.flightDetails ? `${candidate.flightDetails.airline} (${candidate.flightDetails.flightNumber}) - ${candidate.flightDetails.departureDate}` : 'Pending Final PNR Allocation'],
   ];
 
+  const empLineSpacing = 6.5;
   empFields.forEach((item, idx) => {
-    const y = empBoxY + 13 + idx * lineSpacing;
+    const y = empBoxY + 12 + idx * empLineSpacing;
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
+    doc.setFontSize(7.8);
     doc.setTextColor(100, 116, 139);
     doc.text(item[0], 20, y);
 
@@ -1046,5 +1057,137 @@ export function generatePartnerStatementPdf(
   doc.text(`${agency.name} • B2B Partner Network Portal • Helpline: ${agency.phone}`, 105, 293, { align: 'center' });
 
   doc.save(`AL-HERA-Partner-Statement-${(partner.agencyName || 'Partner').replace(/\s+/g, '_')}-${partner.partnerCode || 'PTR'}.pdf`);
+}
+
+/**
+ * Generates an official Direct Candidate Payments Audit & Collection Report PDF
+ */
+export function generateDirectPaymentsReportPdf(
+  payments: { payment: PaymentRecord; candidate: Candidate }[],
+  agencyInfo?: AgencyInfo
+): void {
+  const agency = agencyInfo || getAgencyInfo();
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const navy = [15, 30, 54];
+  const gold = [212, 175, 55];
+  const slateLight = [241, 245, 249];
+
+  // Header
+  doc.setFillColor(navy[0], navy[1], navy[2]);
+  doc.rect(0, 0, 210, 32, 'F');
+
+  doc.setFillColor(gold[0], gold[1], gold[2]);
+  doc.rect(0, 32, 210, 2, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text(agency.name, 15, 12);
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(gold[0], gold[1], gold[2]);
+  doc.text('DIRECT CANDIDATE PAYMENTS AUDIT & COLLECTION REPORT', 15, 19);
+
+  doc.setFontSize(7.5);
+  doc.setTextColor(203, 213, 225);
+  doc.text(`Generated: ${new Date().toLocaleString('en-GB')} | Phone: ${agency.phone} | Email: ${agency.email}`, 15, 26);
+
+  // Summary Metrics
+  const totalAmount = payments.reduce((sum, item) => sum + (Number(item.payment.amount) || 0), 0);
+  const uniqueCandidates = new Set(payments.map((p) => p.candidate.id)).size;
+
+  doc.setFillColor(slateLight[0], slateLight[1], slateLight[2]);
+  doc.roundedRect(15, 40, 180, 18, 1.5, 1.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text('TOTAL DIRECT COLLECTIONS:', 20, 47);
+  doc.setTextColor(16, 185, 129);
+  doc.setFontSize(11);
+  doc.text(`INR ${totalAmount.toLocaleString('en-IN')}`, 20, 54);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text('RECEIPTS COUNT:', 85, 47);
+  doc.setTextColor(navy[0], navy[1], navy[2]);
+  doc.setFontSize(11);
+  doc.text(`${payments.length} Transactions`, 85, 54);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text('CANDIDATES REPRESENTED:', 145, 47);
+  doc.setTextColor(navy[0], navy[1], navy[2]);
+  doc.setFontSize(11);
+  doc.text(`${uniqueCandidates} Candidates`, 145, 54);
+
+  // Table Header
+  const tableHeaderY = 64;
+  doc.setFillColor(navy[0], navy[1], navy[2]);
+  doc.rect(15, tableHeaderY, 180, 7, 'F');
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(255, 255, 255);
+  doc.text('RECEIPT #', 18, tableHeaderY + 4.5);
+  doc.text('CANDIDATE & PASSPORT', 52, tableHeaderY + 4.5);
+  doc.text('DATE', 105, tableHeaderY + 4.5);
+  doc.text('MODE', 125, tableHeaderY + 4.5);
+  doc.text('REF / UTR', 148, tableHeaderY + 4.5);
+  doc.text('AMOUNT (INR)', 190, tableHeaderY + 4.5, { align: 'right' });
+
+  let curY = tableHeaderY + 7;
+  const maxRows = 24;
+  const slicedPayments = payments.slice(0, maxRows);
+
+  if (slicedPayments.length === 0) {
+    doc.setFillColor(255, 255, 255);
+    doc.rect(15, curY, 180, 8, 'FD');
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text('No candidate payment records found.', 18, curY + 5.5);
+  } else {
+    slicedPayments.forEach((p, idx) => {
+      doc.setFillColor(idx % 2 === 0 ? 255 : 248, idx % 2 === 0 ? 255 : 250, idx % 2 === 0 ? 255 : 252);
+      doc.rect(15, curY, 180, 7.5, 'FD');
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(15, curY, 180, 7.5, 'S');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(navy[0], navy[1], navy[2]);
+      doc.text(p.payment.receiptNumber || 'REC', 18, curY + 4.8);
+
+      doc.setFont('helvetica', 'normal');
+      const candText = `${p.candidate.fullName.slice(0, 18)} (${p.candidate.passportNumber || p.candidate.trackingId})`;
+      doc.text(candText, 52, curY + 4.8);
+
+      doc.text(p.payment.date || p.payment.paymentDate || '-', 105, curY + 4.8);
+      doc.text(p.payment.paymentMethod || p.payment.paymentMode || 'Cash', 125, curY + 4.8);
+      doc.text((p.payment.transactionReference || p.payment.note || '-').slice(0, 15), 148, curY + 4.8);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(16, 185, 129);
+      doc.text(`INR ${(Number(p.payment.amount) || 0).toLocaleString('en-IN')}`, 190, curY + 4.8, { align: 'right' });
+
+      curY += 7.5;
+    });
+  }
+
+  // Footer bar
+  doc.setFillColor(navy[0], navy[1], navy[2]);
+  doc.rect(0, 287, 210, 10, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(7);
+  doc.text(`${agency.name} • Direct Candidate Payment Registry • Helpline: ${agency.phone}`, 105, 293, { align: 'center' });
+
+  doc.save(`AL-HERA-Direct-Candidate-Payments-Report-${new Date().toISOString().split('T')[0]}.pdf`);
 }
 

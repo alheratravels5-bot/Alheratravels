@@ -1123,6 +1123,7 @@ export default function App() {
                         candidates={candidates}
                         partners={partners}
                         agencyInfo={agencyInfo}
+                        onRefreshCandidates={refreshAllState}
                       />
                     )}
 

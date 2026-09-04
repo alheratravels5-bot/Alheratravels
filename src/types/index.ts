@@ -44,6 +44,7 @@ export interface StatusTimelineEvent {
   updatedBy: string;
   notes: string;
   location?: string;
+  selectionCity?: string;
 }
 
 export interface PaymentRecord {
@@ -59,6 +60,8 @@ export interface PaymentRecord {
   receivedBy: string;
   candidateId?: string;
   transactionReference?: string;
+  isDirectPayment?: boolean;
+  candidatePassport?: string;
 }
 
 export interface FlightDetails {
@@ -106,6 +109,7 @@ export interface Candidate {
   // Status & Tracking
   status: CandidateStatus;
   statusHistory: StatusTimelineEvent[];
+  selectionCity?: string; // City where candidate was selected / interviewed (e.g. Mumbai, Delhi, Lucknow)
   flightDetails?: FlightDetails;
   
   // Partner / Sub-agent & Visa Link
@@ -600,3 +604,29 @@ export interface AgencyInfo {
   website: string;
   gstin?: string;
 }
+
+export const POPULAR_SELECTION_CITIES = [
+  'Mumbai',
+  'New Delhi',
+  'Lucknow',
+  'Patna',
+  'Hyderabad',
+  'Kolkata',
+  'Chennai',
+  'Bengaluru',
+  'Gorakhpur',
+  'Siwan',
+  'Gopalganj',
+  'Kochi',
+  'Kozhikode',
+  'Jaipur',
+  'Ahmedabad',
+  'Chandigarh',
+  'Jamshedpur',
+  'Ranchi',
+  'Bareilly',
+  'Mangalore',
+  'Bhopal',
+  'Varanasi',
+] as const;
+

@@ -18,7 +18,7 @@ import {
   FileSpreadsheet,
   FileCheck
 } from 'lucide-react';
-import { Candidate, CandidateStatus, JobVacancy, PartnerOffice } from '../../types';
+import { Candidate, CandidateStatus, JobVacancy, PartnerOffice, POPULAR_SELECTION_CITIES } from '../../types';
 import { getJobs, getPartners, getCandidates } from '../../lib/storage';
 import { enrichAllJobsWithMetrics } from '../../lib/jobCalculations';
 
@@ -72,6 +72,7 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
   const [visaNumber, setVisaNumber] = useState('');
   const [wakalaNumber, setWakalaNumber] = useState('');
   const [status, setStatus] = useState<CandidateStatus>('applied');
+  const [selectionCity, setSelectionCity] = useState('');
   const [packageFee, setPackageFee] = useState(65000);
   const [totalPaid, setTotalPaid] = useState(0);
   const [partnerCommission, setPartnerCommission] = useState(6000);
@@ -115,6 +116,7 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
       setVisaNumber(activeCandidate.visaNumber || '');
       setWakalaNumber(activeCandidate.wakalaNumber || '');
       setStatus(activeCandidate.status);
+      setSelectionCity(activeCandidate.selectionCity || '');
       setPackageFee(activeCandidate.packageFee);
       setTotalPaid(activeCandidate.totalPaid);
       setPartnerCommission(activeCandidate.partnerCommission || 6000);
@@ -145,6 +147,7 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
       setVisaNumber('');
       setWakalaNumber('');
       setStatus('applied');
+      setSelectionCity('');
       setPackageFee(65000);
       setTotalPaid(0);
       setPartnerCommission(6000);
@@ -249,6 +252,7 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
       visaNumber,
       wakalaNumber,
       status,
+      selectionCity: selectionCity.trim() || undefined,
       statusHistory: activeCandidate?.statusHistory?.length ? activeCandidate.statusHistory : [
         {
           id: 'sth-' + Date.now(),
@@ -590,7 +594,13 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
                 <label className="block font-bold text-slate-700 mb-1">Candidate Current Status</label>
                 <select
                   value={status}
-                  onChange={(e) => setStatus(e.target.value as CandidateStatus)}
+                  onChange={(e) => {
+                    const newSt = e.target.value as CandidateStatus;
+                    setStatus(newSt);
+                    if (newSt === 'interview_selected' && !selectionCity) {
+                      setSelectionCity('Mumbai');
+                    }
+                  }}
                   className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none bg-amber-50 text-amber-900"
                 >
                   <option value="applied">1. Application Registered</option>
@@ -605,6 +615,56 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
                   <option value="deployed">10. Deployed in Saudi Arabia</option>
                 </select>
               </div>
+
+              {/* Selection City Field - Automatically shown when Selected or already set */}
+              {(status === 'interview_selected' || selectionCity) && (
+                <div className="p-3 bg-indigo-50/80 border-2 border-indigo-300 rounded-xl space-y-2 animate-fade-in shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <label className="block font-bold text-indigo-950 text-xs flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Selection City *</span>
+                    </label>
+                    <span className="text-[10px] text-indigo-700 font-semibold bg-indigo-100/80 px-2 py-0.5 rounded">
+                      Interview & Selection Venue
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      list="selection-cities-form-list"
+                      placeholder="Select or enter city (e.g. Mumbai, New Delhi, Lucknow, Patna...)"
+                      value={selectionCity}
+                      onChange={(e) => setSelectionCity(e.target.value)}
+                      className="w-full text-xs font-bold border border-indigo-300 bg-white rounded-lg p-2.5 pl-8 focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-900 shadow-xs"
+                      required={status === 'interview_selected'}
+                    />
+                    <MapPin className="w-4 h-4 text-indigo-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <datalist id="selection-cities-form-list">
+                      {POPULAR_SELECTION_CITIES.map((c) => (
+                        <option key={c} value={c} />
+                      ))}
+                    </datalist>
+                  </div>
+                  {/* Quick Pick Buttons */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                    <span className="text-[10px] text-slate-500 font-medium">Quick Pick:</span>
+                    {['Mumbai', 'New Delhi', 'Lucknow', 'Patna', 'Hyderabad', 'Kolkata'].map((cityOption) => (
+                      <button
+                        key={cityOption}
+                        type="button"
+                        onClick={() => setSelectionCity(cityOption)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-all ${
+                          selectionCity.toLowerCase() === cityOption.toLowerCase()
+                            ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-indigo-50 hover:border-indigo-300'
+                        }`}
+                      >
+                        {cityOption}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Wakala Ref No.</label>

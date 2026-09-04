@@ -13,7 +13,8 @@ import {
   Sparkles,
   FileSpreadsheet,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  MapPin
 } from 'lucide-react';
 import { Candidate, CandidateStatus, PartnerOffice, AgencyInfo } from '../../types';
 import { getAgencyInfo } from '../../lib/storage';
@@ -43,14 +44,18 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [tradeFilter, setTradeFilter] = useState<string>('all');
   const [partnerFilter, setPartnerFilter] = useState<string>('all');
+  const [cityFilter, setCityFilter] = useState<string>('all');
   const [selectedCandidateForWakala, setSelectedCandidateForWakala] = useState<Candidate | null>(null);
 
   const agency = propAgency || getAgencyInfo();
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
   const safePartners = Array.isArray(partners) ? partners : [];
 
-  // Extract unique trades
+  // Extract unique trades & selection cities
   const uniqueTrades = Array.from(new Set(safeCandidates.map((c) => c?.trade).filter(Boolean)));
+  const uniqueCities = Array.from(
+    new Set(safeCandidates.map((c) => c?.selectionCity).filter((city): city is string => Boolean(city && city.trim())))
+  ).sort();
 
   const filteredCandidates = safeCandidates.filter((c) => {
     if (!c) return false;
@@ -61,13 +66,15 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
       (c.passportNumber || '').toLowerCase().includes(q) ||
       (c.phoneNumber || '').includes(q) ||
       (c.trade || '').toLowerCase().includes(q) ||
+      (c.selectionCity && c.selectionCity.toLowerCase().includes(q)) ||
       (c.sponsorName && c.sponsorName.toLowerCase().includes(q));
 
     const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
     const matchesTrade = tradeFilter === 'all' || c.trade === tradeFilter;
     const matchesPartner = partnerFilter === 'all' || c.partnerOfficeId === partnerFilter;
+    const matchesCity = cityFilter === 'all' || c.selectionCity === cityFilter;
 
-    return matchesSearch && matchesStatus && matchesTrade && matchesPartner;
+    return matchesSearch && matchesStatus && matchesTrade && matchesPartner && matchesCity;
   });
 
   const handleExportCSV = () => {
@@ -77,6 +84,7 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
       'Date of Birth',
       'Passport Number',
       'Trade',
+      'Selection City',
       'Sponsor',
       'Phone',
       'Status',
@@ -90,6 +98,7 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
       c.dateOfBirth || '',
       c.passportNumber,
       `"${c.trade}"`,
+      `"${c.selectionCity || ''}"`,
       `"${c.sponsorName || ''}"`,
       c.phoneNumber,
       c.status,
@@ -160,7 +169,7 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-5 gap-3 text-xs">
         <div className="relative sm:col-span-1">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
           <input
@@ -200,6 +209,21 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
             {uniqueTrades.map((t) => (
               <option key={t} value={t}>
                 {t}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <select
+            value={cityFilter}
+            onChange={(e) => setCityFilter(e.target.value)}
+            className="w-full py-2 px-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none"
+          >
+            <option value="all">All Selection Cities</option>
+            {uniqueCities.map((city) => (
+              <option key={city} value={city}>
+                {city}
               </option>
             ))}
           </select>
@@ -252,6 +276,12 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
                       <span className="font-mono text-[11px] text-slate-500 uppercase">
                         PP: {c.passportNumber} • DOB: {c.dateOfBirth || 'N/A'} • {c.phoneNumber}
                       </span>
+                      {c.selectionCity && (
+                        <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold">
+                          <MapPin className="w-2.5 h-2.5 text-indigo-600" />
+                          <span>Selected in: {c.selectionCity}</span>
+                        </div>
+                      )}
                     </td>
                     <td className="py-3.5 px-4 whitespace-nowrap">
                       <span className="font-semibold text-slate-800">{c.trade}</span>

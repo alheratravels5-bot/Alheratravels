@@ -2926,6 +2926,109 @@ export const deleteCandidatePaymentRecord = (
 };
 
 /**
+ * Record a direct candidate payment
+ * Recalculates candidate financials (totalPaid, balanceDue) and syncs to localStorage and Firestore
+ */
+export const recordDirectCandidatePayment = (
+  candidateIdOrTrackingOrPassport: string,
+  paymentData: {
+    amount: number;
+    paymentDate?: string;
+    date?: string;
+    paymentMethod?: string;
+    paymentMode?: string;
+    receiptNumber?: string;
+    transactionReference?: string;
+    note?: string;
+    remarks?: string;
+    receivedBy?: string;
+    isDirectPayment?: boolean;
+  },
+  user: string = 'Accounts Desk'
+): {
+  success: boolean;
+  message: string;
+  candidate?: Candidate;
+  payment?: PaymentRecord;
+} => {
+  const candidates = getCandidates();
+  const searchKey = (candidateIdOrTrackingOrPassport || '').trim().toLowerCase();
+
+  const candIndex = candidates.findIndex(
+    (c) =>
+      (c.id && c.id.toLowerCase() === searchKey) ||
+      (c.trackingId && c.trackingId.toLowerCase() === searchKey) ||
+      (c.passportNumber && c.passportNumber.toLowerCase() === searchKey)
+  );
+
+  if (candIndex === -1) {
+    return {
+      success: false,
+      message: `Candidate with identifier '${candidateIdOrTrackingOrPassport}' not found.`,
+    };
+  }
+
+  const candidate = { ...candidates[candIndex] };
+  const history = [...(candidate.paymentHistory || [])];
+
+  const payAmount = Number(paymentData.amount) || 0;
+  if (payAmount <= 0) {
+    return {
+      success: false,
+      message: 'Payment amount must be greater than zero.',
+    };
+  }
+
+  const receiptNumber = paymentData.receiptNumber?.trim() || `AHT-DIR-${Date.now().toString().slice(-6)}`;
+  const payDate = paymentData.date || paymentData.paymentDate || new Date().toISOString().split('T')[0];
+  const payMethod = paymentData.paymentMethod || paymentData.paymentMode || 'Cash';
+
+  const newPayment: PaymentRecord = {
+    id: 'pay-dir-' + Date.now(),
+    receiptNumber,
+    candidateId: candidate.id,
+    amount: payAmount,
+    date: payDate,
+    paymentDate: payDate,
+    paymentMethod: payMethod,
+    paymentMode: payMethod,
+    transactionReference: paymentData.transactionReference?.trim() || `DIR-TXN-${Date.now().toString().slice(-6)}`,
+    note: paymentData.note || paymentData.remarks || 'Direct Candidate Payment',
+    remarks: paymentData.remarks || paymentData.note || 'Direct Candidate Payment',
+    receivedBy: paymentData.receivedBy || user,
+    isDirectPayment: true,
+    candidatePassport: candidate.passportNumber,
+  };
+
+  // Prepend to history
+  history.unshift(newPayment);
+  candidate.paymentHistory = history;
+
+  // Recalculate candidate financials
+  const newTotalPaid = history.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  candidate.totalPaid = newTotalPaid;
+  candidate.balanceDue = Math.max(0, candidate.packageFee - newTotalPaid);
+  candidate.updatedAt = new Date().toISOString();
+
+  // Save to candidates list
+  candidates[candIndex] = candidate;
+  saveCandidates(candidates);
+  saveCandidateToFirestore(candidate);
+
+  // Sync partner if candidate is attached to one
+  if (candidate.partnerOfficeId) {
+    savePartners(getPartners());
+  }
+
+  return {
+    success: true,
+    message: `Direct payment of ₹${payAmount.toLocaleString('en-IN')} (Receipt ${receiptNumber}) successfully recorded for ${candidate.fullName}. Balance due: ₹${candidate.balanceDue.toLocaleString('en-IN')}.`,
+    candidate,
+    payment: newPayment,
+  };
+};
+
+/**
  * Update an existing Partner Office Payment record
  * Updates payment, synchronizes ledger entry, recalculates candidate partnerOfficePaidAmount, and syncs to Firestore
  */

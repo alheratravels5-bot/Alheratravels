@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   CreditCard,
   Printer,
@@ -26,8 +26,9 @@ import {
   deleteCandidatePaymentRecord,
   deletePartnerPaymentRecord
 } from '../../lib/storage';
-import { generatePaymentReceiptPdf } from '../../lib/pdfGenerator';
+import { generatePaymentReceiptPdf, generateDirectPaymentsReportPdf } from '../../lib/pdfGenerator';
 import { FetchUpdatePaymentModal } from './FetchUpdatePaymentModal';
+import { DirectCandidatePaymentModal } from './DirectCandidatePaymentModal';
 
 interface AccountsManagementProps {
   candidates: Candidate[];
@@ -57,6 +58,11 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [receiptSearch, setReceiptSearch] = useState('');
   const [partnerPaymentsList, setPartnerPaymentsList] = useState<PartnerOfficePayment[]>([]);
+
+  // Direct Candidate Payment Modal State
+  const [isDirectPaymentModalOpen, setIsDirectPaymentModalOpen] = useState(false);
+  const [directCandidatePreselectId, setDirectCandidatePreselectId] = useState<string | undefined>(undefined);
+  const [candidateReceiptFilter, setCandidateReceiptFilter] = useState<'all' | 'direct' | 'office'>('all');
 
   // Payment Hub Modal State
   const [isFetchUpdateModalOpen, setIsFetchUpdateModalOpen] = useState(false);
@@ -104,19 +110,49 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
     return timeB - timeA;
   });
 
-  // Filtered candidate payments by receipt search
-  const filteredReceipts = allPayments.filter(({ payment, candidate }) => {
-    if (!receiptSearch.trim()) return true;
-    const q = receiptSearch.toLowerCase();
-    return (
-      (payment.receiptNumber && payment.receiptNumber.toLowerCase().includes(q)) ||
-      (candidate.fullName && candidate.fullName.toLowerCase().includes(q)) ||
-      (candidate.trackingId && candidate.trackingId.toLowerCase().includes(q)) ||
-      (payment.transactionReference && payment.transactionReference.toLowerCase().includes(q)) ||
-      (payment.paymentMethod && payment.paymentMethod.toLowerCase().includes(q)) ||
-      (payment.paymentMode && payment.paymentMode.toLowerCase().includes(q))
-    );
-  });
+  // Direct Candidate Payments (payments made directly without sub-agent partner or marked isDirectPayment)
+  const directPayments = useMemo(() => {
+    return allPayments.filter(({ payment, candidate }) => {
+      return (
+        payment.isDirectPayment ||
+        String(payment.receiptNumber || '').includes('DIR') ||
+        !candidate.partnerOfficeId
+      );
+    });
+  }, [allPayments]);
+
+  const totalDirectCollected = useMemo(() => {
+    return directPayments.reduce((acc, { payment }) => acc + (Number(payment?.amount) || 0), 0);
+  }, [directPayments]);
+
+  // Filtered candidate payments by channel & search
+  const filteredReceipts = useMemo(() => {
+    return allPayments.filter(({ payment, candidate }) => {
+      // Channel filter
+      const isDirect =
+        payment.isDirectPayment ||
+        String(payment.receiptNumber || '').includes('DIR') ||
+        !candidate.partnerOfficeId;
+
+      if (candidateReceiptFilter === 'direct' && !isDirect) return false;
+      if (candidateReceiptFilter === 'office' && isDirect) return false;
+
+      // Search query filter
+      if (!receiptSearch.trim()) return true;
+      const q = receiptSearch.toLowerCase();
+      return (
+        (payment.receiptNumber && payment.receiptNumber.toLowerCase().includes(q)) ||
+        (candidate.fullName && candidate.fullName.toLowerCase().includes(q)) ||
+        (candidate.trackingId && candidate.trackingId.toLowerCase().includes(q)) ||
+        (candidate.passportNumber && candidate.passportNumber.toLowerCase().includes(q)) ||
+        (payment.transactionReference && payment.transactionReference.toLowerCase().includes(q)) ||
+        (payment.paymentMethod && payment.paymentMethod.toLowerCase().includes(q)) ||
+        (payment.paymentMode && payment.paymentMode.toLowerCase().includes(q)) ||
+        (payment.note && payment.note.toLowerCase().includes(q)) ||
+        (payment.remarks && payment.remarks.toLowerCase().includes(q))
+      );
+    });
+  }, [allPayments, candidateReceiptFilter, receiptSearch]);
 
   // Filtered partner payments by search
   const filteredPartnerPayments = partnerPaymentsList.filter((p) => {
@@ -132,11 +168,25 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
     );
   });
 
-  const totalPackageVolume = safeCandidates.reduce((acc, c) => acc + (Number(c?.packageFee) || 0), 0);
-  const totalCollected = safeCandidates.reduce((acc, c) => acc + (Number(c?.totalPaid) || 0), 0);
-  const totalOutstanding = safeCandidates.reduce((acc, c) => acc + (Number(c?.balanceDue) || 0), 0);
-  const totalCommissionsEarned = safeCandidates.reduce((acc, c) => acc + (Number(c?.partnerCommission) || 0), 0);
-  const totalPartnerRemitted = partnerPaymentsList.reduce((acc, p) => acc + (Number(p?.amount) || 0), 0);
+  const totalPackageVolume = useMemo(() => {
+    return safeCandidates.reduce((acc, c) => acc + (Number(c?.packageFee) || 0), 0);
+  }, [safeCandidates]);
+
+  const totalCollected = useMemo(() => {
+    return safeCandidates.reduce((acc, c) => acc + (Number(c?.totalPaid) || 0), 0);
+  }, [safeCandidates]);
+
+  const totalOutstanding = useMemo(() => {
+    return safeCandidates.reduce((acc, c) => acc + (Number(c?.balanceDue) || 0), 0);
+  }, [safeCandidates]);
+
+  const totalCommissionsEarned = useMemo(() => {
+    return safeCandidates.reduce((acc, c) => acc + (Number(c?.partnerCommission) || 0), 0);
+  }, [safeCandidates]);
+
+  const totalPartnerRemitted = useMemo(() => {
+    return partnerPaymentsList.reduce((acc, p) => acc + (Number(p?.amount) || 0), 0);
+  }, [partnerPaymentsList]);
 
   const filteredCandidates = safeCandidates.filter((c) => {
     if (!c) return false;
@@ -299,14 +349,36 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            id="accounts-direct-candidate-payment-btn"
+            onClick={() => {
+              setDirectCandidatePreselectId(undefined);
+              setIsDirectPaymentModalOpen(true);
+            }}
+            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 flex items-center gap-2 transition-transform active:scale-95"
+          >
+            <CreditCard className="w-4 h-4 text-emerald-100" />
+            <span>+ Direct Candidate Payment</span>
+          </button>
+
+          <button
+            id="accounts-print-direct-payments-report-btn"
+            onClick={() => generateDirectPaymentsReportPdf(filteredReceipts, agency)}
+            className="px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs border border-slate-300 shadow-2xs flex items-center gap-1.5 transition-colors"
+            title="Print Direct Candidate Payments PDF Report"
+          >
+            <Printer className="w-4 h-4 text-slate-600" />
+            <span>Print Report PDF</span>
+          </button>
+
           <button
             id="accounts-fetch-update-payment-btn"
             onClick={handleOpenGeneralFetchModal}
             className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow flex items-center gap-2 transition-transform active:scale-95"
           >
             <Edit3 className="w-4 h-4" />
-            <span>Fetch & Update Old Payment Record</span>
+            <span>Fetch & Update Old Payment</span>
           </button>
         </div>
       </div>
@@ -316,23 +388,30 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <span className="text-[11px] font-bold text-slate-500 uppercase block">Total Package Volume</span>
           <h3 className="text-2xl font-black text-[#0F1E36] font-display mt-1">
-            ₹{totalPackageVolume.toLocaleString('en-IN')}
+            ₹{(totalPackageVolume || 0).toLocaleString('en-IN')}
           </h3>
           <span className="text-[10px] text-slate-400">Total committed packages</span>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <span className="text-[11px] font-bold text-emerald-700 uppercase block">Collected Revenue</span>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-emerald-700 uppercase block">Collected Revenue</span>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+              Direct: ₹{totalDirectCollected.toLocaleString('en-IN')}
+            </span>
+          </div>
           <h3 className="text-2xl font-black text-emerald-700 font-display mt-1">
-            ₹{totalCollected.toLocaleString('en-IN')}
+            ₹{(totalCollected || 0).toLocaleString('en-IN')}
           </h3>
-          <span className="text-[10px] text-emerald-600 font-medium">Bank & Cash collections</span>
+          <span className="text-[10px] text-emerald-600 font-medium">
+            {directPayments.length} direct, {allPayments.length - directPayments.length} partner collections
+          </span>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <span className="text-[11px] font-bold text-rose-700 uppercase block">Outstanding Balances</span>
           <h3 className="text-2xl font-black text-rose-700 font-display mt-1">
-            ₹{totalOutstanding.toLocaleString('en-IN')}
+            ₹{(totalOutstanding || 0).toLocaleString('en-IN')}
           </h3>
           <span className="text-[10px] text-rose-600 font-medium">Pending collection before flight</span>
         </div>
@@ -340,9 +419,9 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <span className="text-[11px] font-bold text-amber-800 uppercase block">Partner Commissions</span>
           <h3 className="text-2xl font-black text-amber-800 font-display mt-1">
-            ₹{totalCommissionsEarned.toLocaleString('en-IN')}
+            ₹{(totalCommissionsEarned || 0).toLocaleString('en-IN')}
           </h3>
-          <span className="text-[10px] text-slate-500">Across {partners.length} sub-agent offices</span>
+          <span className="text-[10px] text-slate-500">Across {safePartners.length} sub-agent offices</span>
         </div>
       </div>
 
@@ -356,7 +435,7 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                 filterType === 'all' ? 'bg-[#0F1E36] text-white' : 'bg-slate-100 text-slate-700'
               }`}
             >
-              All Candidates ({candidates.length})
+              All Candidates ({safeCandidates.length})
             </button>
             <button
               onClick={() => setFilterType('due')}
@@ -364,7 +443,7 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                 filterType === 'due' ? 'bg-rose-600 text-white' : 'bg-slate-100 text-slate-700'
               }`}
             >
-              With Balance Due ({candidates.filter((c) => c.balanceDue > 0).length})
+              With Balance Due ({safeCandidates.filter((c) => (Number(c?.balanceDue) || 0) > 0).length})
             </button>
             <button
               onClick={() => setFilterType('paid')}
@@ -372,7 +451,7 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                 filterType === 'paid' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700'
               }`}
             >
-              Fully Paid ({candidates.filter((c) => c.balanceDue === 0).length})
+              Fully Paid ({safeCandidates.filter((c) => (Number(c?.balanceDue) || 0) <= 0).length})
             </button>
           </div>
 
@@ -390,12 +469,13 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
             <thead className="bg-slate-50 text-slate-700 font-bold uppercase text-[10px] border-b">
               <tr>
                 <th className="py-3 px-4">Tracking ID</th>
-                <th className="py-3 px-4">Candidate Name</th>
-                <th className="py-3 px-4">Trade / Sponsor</th>
+                <th className="py-3 px-4">Candidate & Passport</th>
+                <th className="py-3 px-4">Trade / Destination</th>
                 <th className="py-3 px-4">Package Fee</th>
                 <th className="py-3 px-4">Total Paid</th>
                 <th className="py-3 px-4">Balance Due</th>
-                <th className="py-3 px-4 text-right">Partner Commission</th>
+                <th className="py-3 px-4">Commission</th>
+                <th className="py-3 px-4 text-right">Direct Collection</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -407,7 +487,10 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                 return (
                   <tr key={c.id} className="hover:bg-slate-50">
                     <td className="py-3 px-4 font-mono font-bold text-amber-900">{c.trackingId}</td>
-                    <td className="py-3 px-4 font-bold text-slate-900">{c.fullName}</td>
+                    <td className="py-3 px-4">
+                      <strong className="text-slate-900 block">{c.fullName}</strong>
+                      <span className="font-mono text-slate-500 text-[10px]">Passport: {c.passportNumber || 'N/A'}</span>
+                    </td>
                     <td className="py-3 px-4 text-slate-600">{c.trade}</td>
                     <td className="py-3 px-4 font-semibold text-slate-900">₹{packageFee.toLocaleString('en-IN')}</td>
                     <td className="py-3 px-4 font-bold text-emerald-700">₹{totalPaid.toLocaleString('en-IN')}</td>
@@ -415,11 +498,25 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                       {balanceDue > 0 ? (
                         <span className="text-rose-600">₹{balanceDue.toLocaleString('en-IN')}</span>
                       ) : (
-                        <span className="text-emerald-600">CLEARED</span>
+                        <span className="text-emerald-600 font-bold">CLEARED</span>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-slate-700">
+                    <td className="py-3 px-4 font-mono font-bold text-slate-700">
                       ₹{partnerComm.toLocaleString('en-IN')}
+                    </td>
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <button
+                        id={`direct-pay-cand-btn-${c.id}`}
+                        onClick={() => {
+                          setDirectCandidatePreselectId(c.id);
+                          setIsDirectPaymentModalOpen(true);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-[10px] inline-flex items-center gap-1 shadow-xs transition-all"
+                        title="Record direct counter or bank payment from candidate"
+                      >
+                        <CreditCard className="w-3 h-3 text-emerald-100" />
+                        <span>+ Direct Pay</span>
+                      </button>
                     </td>
                   </tr>
                 );
@@ -468,7 +565,45 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2.5">
+            {activeLedgerTab === 'candidate' && (
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setCandidateReceiptFilter('all')}
+                  className={`px-2.5 py-1 rounded-md transition-colors ${
+                    candidateReceiptFilter === 'all'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All ({allPayments.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCandidateReceiptFilter('direct')}
+                  className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 ${
+                    candidateReceiptFilter === 'direct'
+                      ? 'bg-emerald-600 text-white shadow-2xs'
+                      : 'text-emerald-700 hover:bg-emerald-50'
+                  }`}
+                >
+                  <span>Direct ({directPayments.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCandidateReceiptFilter('office')}
+                  className={`px-2.5 py-1 rounded-md transition-colors ${
+                    candidateReceiptFilter === 'office'
+                      ? 'bg-purple-700 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Partner ({allPayments.length - directPayments.length})
+                </button>
+              </div>
+            )}
+
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
@@ -476,7 +611,7 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                 type="text"
                 placeholder={
                   activeLedgerTab === 'candidate'
-                    ? 'Search receipt #, candidate, or UTR...'
+                    ? 'Search receipt #, candidate, passport, UTR...'
                     : 'Search voucher #, partner, or UTR...'
                 }
                 value={receiptSearch}
@@ -494,72 +629,105 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
               <thead className="bg-slate-50 text-slate-700 font-bold uppercase text-[10px] border-b">
                 <tr>
                   <th className="py-3 px-4">Receipt No</th>
-                  <th className="py-3 px-4">Candidate & Track ID</th>
+                  <th className="py-3 px-4">Candidate & Passport</th>
                   <th className="py-3 px-4">Date</th>
                   <th className="py-3 px-4">Mode</th>
-                  <th className="py-3 px-4">Txn Ref</th>
+                  <th className="py-3 px-4">Txn Ref / Notes</th>
                   <th className="py-3 px-4">Amount</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {filteredReceipts.map(({ payment, candidate }) => (
-                  <tr key={payment.id} className="hover:bg-slate-50">
-                    <td className="py-3 px-4 font-mono font-bold text-amber-900">{payment.receiptNumber}</td>
-                    <td className="py-3 px-4">
-                      <strong className="text-slate-900 block">{candidate.fullName}</strong>
-                      <span className="font-mono text-slate-500 text-[10px]">{candidate.trackingId}</span>
-                    </td>
-                    <td className="py-3 px-4 font-mono text-slate-600">{payment.date || payment.paymentDate}</td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded bg-slate-100 font-semibold">
-                        {payment.paymentMethod || payment.paymentMode}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-mono text-slate-500">{payment.transactionReference || payment.note || 'N/A'}</td>
-                    <td className="py-3 px-4 font-black text-emerald-800 text-sm">
-                      ₹{(Number(payment.amount) || 0).toLocaleString('en-IN')}
-                    </td>
-                    <td className="py-3 px-4 text-right whitespace-nowrap">
-                      <button
-                        id={`receipt-edit-btn-${payment.id}`}
-                        onClick={() => handleOpenEditPayment(candidate.id, payment.id)}
-                        className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-bold inline-flex items-center gap-1 shadow-2xs mr-1.5 transition-all active:scale-95"
-                        title="Edit payment details"
-                      >
-                        <Edit3 className="w-3 h-3" />
-                        <span>Edit</span>
-                      </button>
-                      <button
-                        id={`receipt-delete-btn-${payment.id}`}
-                        onClick={() =>
-                          handleDeleteCandidatePayment(
-                            candidate.id,
-                            payment.id,
-                            payment.receiptNumber || 'Receipt',
-                            Number(payment.amount) || 0,
-                            candidate.fullName,
-                            candidate.trackingId
-                          )
-                        }
-                        className="px-2.5 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 text-[10px] font-bold inline-flex items-center gap-1 transition-all active:scale-95 mr-1.5"
-                        title="Delete payment record and recalculate balance"
-                      >
-                        <Trash2 className="w-3 h-3 text-rose-600" />
-                        <span>Delete</span>
-                      </button>
-                      <button
-                        id={`receipt-print-btn-${payment.id}`}
-                        onClick={() => generatePaymentReceiptPdf(payment, candidate, agency)}
-                        className="px-2.5 py-1 rounded bg-[#0F1E36] hover:bg-[#1A3258] text-white text-[10px] font-bold inline-flex items-center gap-1 transition-all"
-                        title="Print receipt PDF"
-                      >
-                        <Printer className="w-3 h-3 text-amber-400" />
-                        <span>Print PDF</span>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {filteredReceipts.map(({ payment, candidate }) => {
+                  const isDirect =
+                    payment.isDirectPayment ||
+                    String(payment.receiptNumber || '').includes('DIR') ||
+                    !candidate.partnerOfficeId;
+
+                  return (
+                    <tr key={payment.id} className="hover:bg-slate-50">
+                      <td className="py-3 px-4 font-mono font-bold text-amber-900">
+                        <div className="flex items-center gap-1.5">
+                          <span>{payment.receiptNumber}</span>
+                          {isDirect ? (
+                            <span className="text-[9px] font-sans px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 font-bold border border-emerald-200">
+                              Direct
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-sans px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 font-medium">
+                              Office
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <strong className="text-slate-900 block">{candidate.fullName}</strong>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-500 font-mono">
+                          <span>ID: {candidate.trackingId}</span>
+                          <span>•</span>
+                          <span className="text-amber-800 font-semibold">Pass: {candidate.passportNumber || 'N/A'}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-slate-600">{payment.date || payment.paymentDate}</td>
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-0.5 rounded bg-slate-100 font-semibold text-slate-700">
+                          {payment.paymentMethod || payment.paymentMode}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-slate-600">
+                        <div className="font-mono text-slate-700 font-medium text-[11px]">
+                          {payment.transactionReference || '-'}
+                        </div>
+                        {(payment.note || payment.remarks) && (
+                          <div className="text-[10px] text-slate-400 truncate max-w-[150px]">
+                            {payment.note || payment.remarks}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 font-black text-emerald-800 text-sm">
+                        ₹{(Number(payment.amount) || 0).toLocaleString('en-IN')}
+                      </td>
+                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                        <button
+                          id={`receipt-edit-btn-${payment.id}`}
+                          onClick={() => handleOpenEditPayment(candidate.id, payment.id)}
+                          className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-bold inline-flex items-center gap-1 shadow-2xs mr-1.5 transition-all active:scale-95"
+                          title="Edit payment details"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          id={`receipt-delete-btn-${payment.id}`}
+                          onClick={() =>
+                            handleDeleteCandidatePayment(
+                              candidate.id,
+                              payment.id,
+                              payment.receiptNumber || 'Receipt',
+                              Number(payment.amount) || 0,
+                              candidate.fullName,
+                              candidate.trackingId
+                            )
+                          }
+                          className="px-2.5 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 text-[10px] font-bold inline-flex items-center gap-1 transition-all active:scale-95 mr-1.5"
+                          title="Delete payment record and recalculate balance"
+                        >
+                          <Trash2 className="w-3 h-3 text-rose-600" />
+                          <span>Delete</span>
+                        </button>
+                        <button
+                          id={`receipt-print-btn-${payment.id}`}
+                          onClick={() => generatePaymentReceiptPdf(payment, candidate, agency)}
+                          className="px-2.5 py-1 rounded bg-[#0F1E36] hover:bg-[#1A3258] text-white text-[10px] font-bold inline-flex items-center gap-1 transition-all"
+                          title="Print receipt PDF"
+                        >
+                          <Printer className="w-3 h-3 text-amber-400" />
+                          <span>Print PDF</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {filteredReceipts.length === 0 && (
                   <tr>
                     <td colSpan={7} className="py-8 text-center text-slate-500">
@@ -753,6 +921,19 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
         initialCandidatePayment={selectedCandidatePaymentForEdit || undefined}
         initialPartnerPaymentId={selectedPartnerPaymentForEdit || undefined}
         onPaymentUpdated={handlePaymentUpdated}
+      />
+
+      {/* Direct Candidate Payment Modal */}
+      <DirectCandidatePaymentModal
+        isOpen={isDirectPaymentModalOpen}
+        onClose={() => {
+          setIsDirectPaymentModalOpen(false);
+          setDirectCandidatePreselectId(undefined);
+        }}
+        candidates={safeCandidates}
+        preselectedCandidateId={directCandidatePreselectId}
+        onPaymentRecorded={handlePaymentUpdated}
+        agencyInfo={agency}
       />
     </div>
   );
