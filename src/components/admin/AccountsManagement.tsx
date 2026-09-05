@@ -24,7 +24,8 @@ import {
   getCandidates,
   getPartnerPayments,
   deleteCandidatePaymentRecord,
-  deletePartnerPaymentRecord
+  deletePartnerPaymentRecord,
+  updateCandidateCommission
 } from '../../lib/storage';
 import { generatePaymentReceiptPdf, generateDirectPaymentsReportPdf } from '../../lib/pdfGenerator';
 import { FetchUpdatePaymentModal } from './FetchUpdatePaymentModal';
@@ -74,6 +75,11 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
   const [initialSearchTerm, setInitialSearchTerm] = useState('');
   const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  // Commission Adjustment Modal State
+  const [editingCommissionCand, setEditingCommissionCand] = useState<Candidate | null>(null);
+  const [editCommissionAmount, setEditCommissionAmount] = useState<string>('');
+  const [commissionToast, setCommissionToast] = useState<string | null>(null);
+
   // In-app deletion confirmation modal state (safe against mobile iframe restrictions)
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<DeletePaymentTarget | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -110,13 +116,33 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
     return timeB - timeA;
   });
 
+  // Helper to reliably resolve a candidate's commission credited to Al-Hera Travels
+  const getCandidateCommission = (c: Candidate): number => {
+    if (!c) return 0;
+    // 1. Candidate alHeraCommission
+    if (c.alHeraCommission !== undefined && c.alHeraCommission !== null) {
+      return Math.max(0, Number(c.alHeraCommission) || 0);
+    }
+    // 2. Candidate commission recorded
+    if (c.partnerCommission !== undefined && c.partnerCommission !== null) {
+      return Math.max(0, Number(c.partnerCommission) || 0);
+    }
+    // No automatic partner fallback (commissions belong strictly to Al-Hera Travels)
+    return 0;
+  };
+
+  // Receipts for candidates affiliated with a sub-agent / partner office
+  const partnerAffiliatedReceipts = useMemo(() => {
+    return allPayments.filter(({ candidate }) => Boolean(candidate.partnerOfficeId || candidate.partnerOfficeName));
+  }, [allPayments]);
+
   // Direct Candidate Payments (payments made directly without sub-agent partner or marked isDirectPayment)
   const directPayments = useMemo(() => {
     return allPayments.filter(({ payment, candidate }) => {
       return (
         payment.isDirectPayment ||
         String(payment.receiptNumber || '').includes('DIR') ||
-        !candidate.partnerOfficeId
+        (!candidate.partnerOfficeId && !candidate.partnerOfficeName)
       );
     });
   }, [allPayments]);
@@ -128,14 +154,10 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
   // Filtered candidate payments by channel & search
   const filteredReceipts = useMemo(() => {
     return allPayments.filter(({ payment, candidate }) => {
-      // Channel filter
-      const isDirect =
-        payment.isDirectPayment ||
-        String(payment.receiptNumber || '').includes('DIR') ||
-        !candidate.partnerOfficeId;
-
-      if (candidateReceiptFilter === 'direct' && !isDirect) return false;
-      if (candidateReceiptFilter === 'office' && isDirect) return false;
+      // Channel filter: office (partner-affiliated candidate) vs direct
+      const hasPartner = Boolean(candidate.partnerOfficeId || candidate.partnerOfficeName);
+      if (candidateReceiptFilter === 'direct' && hasPartner && !payment.isDirectPayment) return false;
+      if (candidateReceiptFilter === 'office' && !hasPartner) return false;
 
       // Search query filter
       if (!receiptSearch.trim()) return true;
@@ -145,6 +167,7 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
         (candidate.fullName && candidate.fullName.toLowerCase().includes(q)) ||
         (candidate.trackingId && candidate.trackingId.toLowerCase().includes(q)) ||
         (candidate.passportNumber && candidate.passportNumber.toLowerCase().includes(q)) ||
+        (candidate.partnerOfficeName && candidate.partnerOfficeName.toLowerCase().includes(q)) ||
         (payment.transactionReference && payment.transactionReference.toLowerCase().includes(q)) ||
         (payment.paymentMethod && payment.paymentMethod.toLowerCase().includes(q)) ||
         (payment.paymentMode && payment.paymentMode.toLowerCase().includes(q)) ||
@@ -181,8 +204,8 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
   }, [safeCandidates]);
 
   const totalCommissionsEarned = useMemo(() => {
-    return safeCandidates.reduce((acc, c) => acc + (Number(c?.partnerCommission) || 0), 0);
-  }, [safeCandidates]);
+    return safeCandidates.reduce((acc, c) => acc + getCandidateCommission(c), 0);
+  }, [safeCandidates, safePartners]);
 
   const totalPartnerRemitted = useMemo(() => {
     return partnerPaymentsList.reduce((acc, p) => acc + (Number(p?.amount) || 0), 0);
@@ -416,12 +439,17 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
           <span className="text-[10px] text-rose-600 font-medium">Pending collection before flight</span>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <span className="text-[11px] font-bold text-amber-800 uppercase block">Partner Commissions</span>
-          <h3 className="text-2xl font-black text-amber-800 font-display mt-1">
+        <div className="bg-white p-5 rounded-2xl border border-amber-200/80 bg-linear-to-br from-white to-amber-50/40 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-amber-900 uppercase block tracking-wider">Al-Hera Commission</span>
+            <span className="text-[10px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-full border border-amber-200">Agency Earnings</span>
+          </div>
+          <h3 className="text-2xl font-black text-amber-900 font-display mt-1 font-mono">
             ₹{(totalCommissionsEarned || 0).toLocaleString('en-IN')}
           </h3>
-          <span className="text-[10px] text-slate-500">Across {safePartners.length} sub-agent offices</span>
+          <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 mt-1">
+            <CheckCircle2 className="w-3 h-3 text-emerald-600 inline shrink-0" /> Total earnings credited to Al-Hera Travels
+          </span>
         </div>
       </div>
 
@@ -474,7 +502,7 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                 <th className="py-3 px-4">Package Fee</th>
                 <th className="py-3 px-4">Total Paid</th>
                 <th className="py-3 px-4">Balance Due</th>
-                <th className="py-3 px-4">Commission</th>
+                <th className="py-3 px-4">Al-Hera Commission</th>
                 <th className="py-3 px-4 text-right">Direct Collection</th>
               </tr>
             </thead>
@@ -483,7 +511,7 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                 const packageFee = Number(c.packageFee) || 0;
                 const totalPaid = Number(c.totalPaid) || 0;
                 const balanceDue = Number(c.balanceDue) || 0;
-                const partnerComm = Number(c.partnerCommission) || 0;
+                const partnerComm = getCandidateCommission(c);
                 return (
                   <tr key={c.id} className="hover:bg-slate-50">
                     <td className="py-3 px-4 font-mono font-bold text-amber-900">{c.trackingId}</td>
@@ -501,8 +529,31 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                         <span className="text-emerald-600 font-bold">CLEARED</span>
                       )}
                     </td>
-                    <td className="py-3 px-4 font-mono font-bold text-slate-700">
-                      ₹{partnerComm.toLocaleString('en-IN')}
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`font-mono font-bold text-xs ${partnerComm === 0 ? 'text-slate-500' : 'text-slate-900'}`}>
+                          ₹{partnerComm.toLocaleString('en-IN')}
+                        </span>
+                        {partnerComm === 0 && (
+                          <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1 py-0.2 rounded border border-slate-200 uppercase tracking-wider">
+                            Zero
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingCommissionCand(c);
+                            setEditCommissionAmount(String(partnerComm));
+                          }}
+                          className="text-amber-700 hover:text-amber-900 p-0.5 rounded hover:bg-amber-100 transition-colors"
+                          title="Click to manually edit commission (or set to zero)"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <span className="text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.2 rounded font-semibold inline-block mt-0.5">
+                        Al-Hera Travels
+                      </span>
                     </td>
                     <td className="py-3 px-4 text-right whitespace-nowrap">
                       <button
@@ -581,6 +632,17 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                 </button>
                 <button
                   type="button"
+                  onClick={() => setCandidateReceiptFilter('office')}
+                  className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 ${
+                    candidateReceiptFilter === 'office'
+                      ? 'bg-purple-700 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <span>Partner ({partnerAffiliatedReceipts.length})</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => setCandidateReceiptFilter('direct')}
                   className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 ${
                     candidateReceiptFilter === 'direct'
@@ -589,17 +651,6 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                   }`}
                 >
                   <span>Direct ({directPayments.length})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCandidateReceiptFilter('office')}
-                  className={`px-2.5 py-1 rounded-md transition-colors ${
-                    candidateReceiptFilter === 'office'
-                      ? 'bg-purple-700 text-white shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Partner ({allPayments.length - directPayments.length})
                 </button>
               </div>
             )}
@@ -630,6 +681,7 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                 <tr>
                   <th className="py-3 px-4">Receipt No</th>
                   <th className="py-3 px-4">Candidate & Passport</th>
+                  <th className="py-3 px-4">Al-Hera Commission</th>
                   <th className="py-3 px-4">Date</th>
                   <th className="py-3 px-4">Mode</th>
                   <th className="py-3 px-4">Txn Ref / Notes</th>
@@ -642,7 +694,7 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                   const isDirect =
                     payment.isDirectPayment ||
                     String(payment.receiptNumber || '').includes('DIR') ||
-                    !candidate.partnerOfficeId;
+                    (!candidate.partnerOfficeId && !candidate.partnerOfficeName);
 
                   return (
                     <tr key={payment.id} className="hover:bg-slate-50">
@@ -667,6 +719,14 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
                           <span>•</span>
                           <span className="text-amber-800 font-semibold">Pass: {candidate.passportNumber || 'N/A'}</span>
                         </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="font-mono text-xs font-bold text-slate-900 block">
+                          ₹{getCandidateCommission(candidate).toLocaleString('en-IN')}
+                        </span>
+                        <span className="text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.2 rounded font-semibold inline-block mt-0.5">
+                          Al-Hera Travels
+                        </span>
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-600">{payment.date || payment.paymentDate}</td>
                       <td className="py-3 px-4">
@@ -935,6 +995,148 @@ export const AccountsManagement: React.FC<AccountsManagementProps> = ({
         onPaymentRecorded={handlePaymentUpdated}
         agencyInfo={agency}
       />
+
+      {/* Inline Commission Adjustment Modal */}
+      {editingCommissionCand && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 relative">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h4 className="font-bold text-slate-900 text-base">Adjust Al-Hera Commission</h4>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Candidate: <span className="font-semibold text-slate-800">{editingCommissionCand.fullName}</span> ({editingCommissionCand.trackingId})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingCommissionCand(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="py-4 space-y-3.5">
+              <div className="bg-amber-50/80 border border-amber-200/80 rounded-xl p-3 text-xs flex justify-between items-center">
+                <div>
+                  <span className="text-amber-900 font-bold block uppercase text-[10px]">Beneficiary Account</span>
+                  <span className="text-emerald-800 font-bold text-sm">Al-Hera Travels</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-amber-900 font-bold block uppercase text-[10px]">Package Fee</span>
+                  <span className="text-slate-900 font-mono font-black text-sm">₹{Number(editingCommissionCand.packageFee || 0).toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase">
+                    Al-Hera Commission Amount (₹ INR)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEditCommissionAmount('0')}
+                    className={`text-[11px] px-2 py-0.5 rounded-md font-semibold transition-all ${
+                      editCommissionAmount === '0' || Number(editCommissionAmount) === 0
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+                    }`}
+                  >
+                    Set Zero (₹0)
+                  </button>
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">₹</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editCommissionAmount}
+                    onChange={(e) => setEditCommissionAmount(e.target.value)}
+                    placeholder="0 (Enter manual amount or set 0 for no commission)"
+                    className="w-full pl-8 pr-3 py-2 text-sm font-mono font-bold border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+                <span className="text-[11px] text-slate-500 font-medium">Quick Presets:</span>
+                <button
+                  type="button"
+                  onClick={() => setEditCommissionAmount('0')}
+                  className={`px-2.5 py-1 text-[11px] font-mono font-bold rounded-lg border transition-all ${
+                    editCommissionAmount === '0' || Number(editCommissionAmount) === 0
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                      : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                  }`}
+                >
+                  ₹0 (No Commission)
+                </button>
+                {[3000, 5000, 6000, 7000, 10000, 15000].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setEditCommissionAmount(String(preset))}
+                    className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded-md border transition-colors ${
+                      Number(editCommissionAmount) === preset
+                        ? 'bg-amber-600 text-white border-amber-600'
+                        : 'bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-900 border-slate-200'
+                    }`}
+                  >
+                    ₹{preset.toLocaleString('en-IN')}
+                  </button>
+                ))}
+              </div>
+
+              <div className="text-[11px]">
+                {editCommissionAmount === '0' || Number(editCommissionAmount) === 0 ? (
+                  <span className="text-emerald-700 font-semibold bg-emerald-50 border border-emerald-200/80 px-2.5 py-1.5 rounded-lg inline-block w-full">
+                    ✓ Zero Commission selected: No commission will be added and ₹0 will be displayed for this candidate.
+                  </span>
+                ) : (
+                  <span className="text-slate-600 bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg inline-block w-full">
+                    ✓ Manual Commission: ₹{Number(editCommissionAmount || 0).toLocaleString('en-IN')} will be credited to Al-Hera Travels.
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingCommissionCand(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const num = Number(editCommissionAmount) || 0;
+                  const res = updateCandidateCommission(editingCommissionCand.id, num);
+                  if (res.success) {
+                    setCommissionToast(res.message);
+                    setTimeout(() => setCommissionToast(null), 4000);
+                    setEditingCommissionCand(null);
+                    onRefreshCandidates?.();
+                  }
+                }}
+                className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 active:scale-95 rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Save Al-Hera Commission</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Commission Feedback Notice */}
+      {commissionToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-emerald-800 text-white text-xs font-bold px-4 py-3 rounded-xl shadow-xl flex items-center gap-2 border border-emerald-700 animate-in slide-in-from-bottom-4 duration-300">
+          <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0" />
+          <span>{commissionToast}</span>
+        </div>
+      )}
     </div>
   );
 };

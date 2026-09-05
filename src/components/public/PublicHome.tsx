@@ -99,7 +99,7 @@ export const PublicHome: React.FC<PublicHomeProps> = ({
     if (action === 'jobs') navigateTo('public_jobs');
     else if (action === 'umrah') navigateTo('public_umrah');
     else if (action === 'track') navigateTo('public_tracking');
-    else if (action === 'partners') navigateTo('public_partners');
+    else if (action === 'partners') navigateTo('public_about');
     else if (action === 'whatsapp') {
       window.open(`https://wa.me/${agency.whatsapp}?text=Assalamu%20Alaikum%20Al-Hera%20Travels`, '_blank');
     } else if (action === 'contact') navigateTo('public_about');

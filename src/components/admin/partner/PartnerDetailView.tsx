@@ -706,8 +706,8 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 block">
                         {cand.status}
                       </span>
-                      <span className="text-[10px] text-slate-400">
-                        Commission: ₹{(cand.partnerCommission || cand.alHeraCommission || 0).toLocaleString('en-IN')}
+                      <span className="text-[10px] text-slate-500 font-medium">
+                        Al-Hera Commission: ₹{(cand.alHeraCommission !== undefined && cand.alHeraCommission !== null ? Number(cand.alHeraCommission) : (Number(cand.partnerCommission) || 0)).toLocaleString('en-IN')}
                       </span>
                     </div>
                   </div>

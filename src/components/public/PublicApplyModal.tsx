@@ -4,6 +4,7 @@ import { JobVacancy, Candidate, AgencyInfo } from '../../types';
 import { getCandidates, saveCandidates, getAgencyInfo } from '../../lib/storage';
 import { formatWhatsAppUrl, logSentMessage } from '../../lib/notifications';
 import { insertCandidateDirectToSupabase, fetchCandidatesDirectFromSupabase } from '../../lib/supabase';
+import { compressImage } from '../../lib/imageUtils';
 
 interface PublicApplyModalProps {
   job: JobVacancy | null;
@@ -43,16 +44,21 @@ export const PublicApplyModal: React.FC<PublicApplyModalProps> = ({
 
   const agency = getAgencyInfo();
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (event.target?.result) {
-        setPhotoUrl(event.target.result as string);
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressed = await compressImage(file, 400, 400, 0.82);
+      setPhotoUrl(compressed);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setPhotoUrl(event.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

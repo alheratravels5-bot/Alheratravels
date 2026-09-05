@@ -42,12 +42,16 @@ import {
   deleteRecordFromSupabase,
   signOutFromSupabaseAuth,
   insertCandidateDirectToSupabase,
-  fetchCandidatesDirectFromSupabase
+  fetchCandidatesDirectFromSupabase,
+  updateCandidateStatusDirectInSupabase,
+  updateMultipleCandidatesStatusInSupabase,
+  updateCandidateDirectInSupabase
 } from './lib/supabase';
 
 // Types
 import {
   Candidate,
+  CandidateStatus,
   JobVacancy,
   UmrahPackage,
   PartnerOffice,
@@ -119,7 +123,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 export default function App() {
   // Navigation & Root Views
   const [currentView, setCurrentView] = useState<'public' | 'admin'>('public');
-  const [publicTab, setPublicTab] = useState<'home' | 'jobs' | 'umrah' | 'tracking' | 'partners' | 'about'>('home');
+  const [publicTab, setPublicTab] = useState<'home' | 'jobs' | 'umrah' | 'tracking' | 'about'>('home');
   const [adminTab, setAdminTab] = useState<string>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -357,33 +361,40 @@ export default function App() {
   // Candidate Operations: Direct Supabase Save & Cloud Refresh
   const handleCreateOrUpdateCandidate = async (candidateData: Partial<Candidate>) => {
     let candToSave: Candidate;
-    if (candidateToEdit) {
+    const isEdit = !!candidateToEdit;
+    if (isEdit && candidateToEdit) {
       candToSave = {
         ...candidateToEdit,
         ...candidateData,
-        trackingId: candidateData.trackingId || candidateToEdit.trackingId || `AHT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+        trackingId: (candidateData.trackingId || candidateToEdit.trackingId || `AHT-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`).toUpperCase().trim(),
+        fullName: (candidateData.fullName || candidateToEdit.fullName || 'Candidate').trim(),
+        passportNumber: (candidateData.passportNumber || candidateToEdit.passportNumber || '').toUpperCase().trim(),
+        phoneNumber: (candidateData.phoneNumber || candidateToEdit.phoneNumber || '').trim(),
+        whatsappNumber: (candidateData.whatsappNumber || candidateData.phoneNumber || candidateToEdit.whatsappNumber || '').trim(),
+        selectionCity: candidateData.selectionCity !== undefined ? candidateData.selectionCity : candidateToEdit.selectionCity,
+        documents: candidateData.documents || candidateToEdit.documents || [],
         updatedAt: new Date().toISOString(),
       };
       showToast(`Saving candidate ${candToSave.fullName} to Supabase...`);
     } else {
       const year = new Date().getFullYear();
-      const trackingId = candidateData.trackingId || `AHT-${year}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const trackingId = (candidateData.trackingId || `AHT-${year}-${Math.floor(10000 + Math.random() * 90000)}`).toUpperCase().trim();
       candToSave = {
         id: candidateData.id || 'cand-' + Date.now(),
-        trackingId: trackingId.toUpperCase(),
-        fullName: candidateData.fullName || 'Candidate',
-        fatherName: candidateData.fatherName || '',
-        passportNumber: (candidateData.passportNumber || '').toUpperCase(),
+        trackingId: trackingId,
+        fullName: (candidateData.fullName || 'Candidate').trim(),
+        fatherName: (candidateData.fatherName || '').trim(),
+        passportNumber: (candidateData.passportNumber || '').toUpperCase().trim(),
         passportExpiry: candidateData.passportExpiry || '',
         dateOfBirth: candidateData.dateOfBirth || '1995-01-01',
         gender: candidateData.gender || 'Male',
         nationality: candidateData.nationality || 'Indian',
-        phoneNumber: candidateData.phoneNumber || '',
-        whatsappNumber: candidateData.whatsappNumber || candidateData.phoneNumber || '',
-        email: candidateData.email || '',
-        city: candidateData.city || '',
-        state: candidateData.state || '',
-        address: candidateData.address || `${candidateData.city || ''}, ${candidateData.state || ''}`,
+        phoneNumber: (candidateData.phoneNumber || '').trim(),
+        whatsappNumber: (candidateData.whatsappNumber || candidateData.phoneNumber || '').trim(),
+        email: (candidateData.email || '').trim(),
+        city: (candidateData.city || '').trim(),
+        state: (candidateData.state || '').trim(),
+        address: candidateData.address || `${candidateData.city || ''}, ${candidateData.state || ''}`.trim(),
         trade: candidateData.trade || 'General Worker',
         experienceYears: Number(candidateData.experienceYears || 0),
         education: candidateData.education || '',
@@ -393,9 +404,11 @@ export default function App() {
         partnerOfficeId: candidateData.partnerOfficeId,
         partnerOfficeName: candidateData.partnerOfficeName,
         partnerCommission: Number(candidateData.partnerCommission || 0),
+        visaCategory: candidateData.visaCategory || '',
         visaNumber: candidateData.visaNumber || '',
         wakalaNumber: candidateData.wakalaNumber || '',
         status: candidateData.status || 'applied',
+        selectionCity: candidateData.selectionCity || undefined,
         statusHistory: candidateData.statusHistory || [
           {
             id: 'sth-' + Date.now(),
@@ -403,48 +416,65 @@ export default function App() {
             timestamp: new Date().toISOString(),
             updatedBy: currentUser?.name || 'Administrator',
             notes: 'Candidate registered in Al-Hera ERP system.',
+            selectionCity: candidateData.selectionCity || undefined,
           }
         ],
         packageFee: Number(candidateData.packageFee || 0),
         totalPaid: Number(candidateData.totalPaid || 0),
-        balanceDue: Number(candidateData.packageFee || 0) - Number(candidateData.totalPaid || 0),
+        balanceDue: (Number(candidateData.packageFee || 0)) - (Number(candidateData.totalPaid || 0)),
         paymentHistory: candidateData.paymentHistory || [],
         remarks: candidateData.remarks || '',
         photoUrl: candidateData.photoUrl || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop&q=80',
+        documents: candidateData.documents || [],
+        passportScanUrl: candidateData.passportScanUrl || '',
+        medicalReportUrl: candidateData.medicalReportUrl || '',
+        tradeCertificateUrl: candidateData.tradeCertificateUrl || '',
+        cvUrl: candidateData.cvUrl || '',
+        flightDetails: candidateData.flightDetails || undefined,
         createdAt: candidateData.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
       showToast(`Registering candidate ${candToSave.fullName} to Supabase...`);
     }
 
-    // 1. Insert directly to connected Supabase public.candidates table
-    const directResult = await insertCandidateDirectToSupabase(candToSave);
+    // Optimistic local update first so candidate appears immediately in the table
+    const optimisticList = isEdit
+      ? candidates.map((c) => (c.id === candToSave.id || c.trackingId === candToSave.trackingId ? candToSave : c))
+      : [candToSave, ...candidates.filter((c) => c.trackingId !== candToSave.trackingId)];
+    setCandidates(optimisticList);
+    saveCandidates(optimisticList);
 
-    if (directResult.success && directResult.candidate) {
-      // 2. Fetch freshly refreshed candidates from Supabase
-      const cloudResult = await fetchCandidatesDirectFromSupabase();
-      if (cloudResult.success && cloudResult.candidates && cloudResult.candidates.length > 0) {
-        setCandidates(cloudResult.candidates);
-        saveCandidates(cloudResult.candidates);
-      } else {
-        const localList = candidateToEdit
-          ? candidates.map((c) => (c.id === candToSave.id ? directResult.candidate! : c))
-          : [directResult.candidate!, ...candidates.filter((c) => c.id !== directResult.candidate!.id)];
-        setCandidates(localList);
-        saveCandidates(localList);
-      }
-      showToast(`✓ Candidate saved to Supabase! Tracking ID: ${candToSave.trackingId}`);
+    let saveResult: { success: boolean; message: string; candidate?: Candidate; candidates?: Candidate[] };
+    if (isEdit) {
+      saveResult = await updateCandidateDirectInSupabase(candToSave);
     } else {
-      // Fallback local update if network issue
-      const localList = candidateToEdit
-        ? candidates.map((c) => (c.id === candToSave.id ? candToSave : c))
-        : [candToSave, ...candidates];
-      handleSaveCandidates(localList);
-      showToast(`Candidate registered! Tracking ID: ${candToSave.trackingId}`);
+      saveResult = await insertCandidateDirectToSupabase(candToSave);
     }
 
-    setIsCandidateFormOpen(false);
-    setCandidateToEdit(null);
+    if (saveResult.success) {
+      if (saveResult.candidates && saveResult.candidates.length > 0) {
+        // Merge so documents and selectionCity are preserved
+        const merged = saveResult.candidates.map((c) =>
+          c.trackingId === candToSave.trackingId
+            ? { ...c, ...candToSave, documents: candToSave.documents || c.documents || [] }
+            : c
+        );
+        setCandidates(merged);
+        saveCandidates(merged);
+      }
+      showToast(`✓ Candidate saved to Supabase! Tracking ID: ${candToSave.trackingId}`);
+      setIsCandidateFormOpen(false);
+      setCandidateToEdit(null);
+      return { success: true, candidate: candToSave };
+    } else {
+      console.warn('Direct Supabase save issue:', saveResult.message);
+      // Keep optimistic list saved locally
+      saveCandidates(optimisticList);
+      showToast(`Saved locally (Tracking ID: ${candToSave.trackingId}). Synced to local storage.`);
+      setIsCandidateFormOpen(false);
+      setCandidateToEdit(null);
+      return { success: true, candidate: candToSave };
+    }
   };
 
   const handleDeleteCandidate = (candidateId: string) => {
@@ -460,11 +490,87 @@ export default function App() {
     showToast('Candidate record removed successfully.');
   };
 
-  const handleUpdateSingleCandidate = (updatedCandidate: Candidate) => {
-    const updated = candidates.map((c) => (c.id === updatedCandidate.id ? updatedCandidate : c));
-    handleSaveCandidates(updated);
-    setSelectedCandidateDetail(updatedCandidate);
-    showToast('Dossier updated successfully.');
+  const handleUpdateSingleCandidate = async (updatedCandidate: Candidate): Promise<boolean> => {
+    // 1. Immediate optimistic UI update
+    const optimisticList = candidates.map((c) => (c.id === updatedCandidate.id ? updatedCandidate : c));
+    setCandidates(optimisticList);
+    saveCandidates(optimisticList);
+    if (selectedCandidateDetail?.id === updatedCandidate.id) {
+      setSelectedCandidateDetail(updatedCandidate);
+    }
+
+    showToast(`Saving candidate ${updatedCandidate.fullName} status to Supabase...`);
+
+    // 2. Direct awaited UPDATE request to Supabase public.candidates table
+    const result = await updateCandidateDirectInSupabase(updatedCandidate);
+
+    if (result.success) {
+      if (result.candidates && result.candidates.length > 0) {
+        setCandidates(result.candidates);
+        saveCandidates(result.candidates);
+      }
+      if (result.candidate) {
+        setSelectedCandidateDetail(result.candidate);
+      }
+      showToast(`✓ Status updated to "${updatedCandidate.status.replace(/_/g, ' ')}" & saved to Supabase!`);
+      return true;
+    } else {
+      showToast(`Database warning: ${result.message || 'Failed to update in Supabase'}`);
+      return false;
+    }
+  };
+
+  const handleUpdateCandidateStatus = async (
+    candidateId: string,
+    newStatus: CandidateStatus,
+    options?: { notes?: string; selectionCity?: string }
+  ): Promise<boolean> => {
+    showToast(`Saving candidate status change to "${newStatus.replace(/_/g, ' ')}" in Supabase...`);
+
+    const result = await updateCandidateStatusDirectInSupabase(candidateId, newStatus, {
+      ...options,
+      updatedBy: currentUser?.name || 'Administrator',
+    });
+
+    if (result.success) {
+      if (result.candidates && result.candidates.length > 0) {
+        setCandidates(result.candidates);
+        saveCandidates(result.candidates);
+      }
+      if (result.candidate && selectedCandidateDetail?.id === candidateId) {
+        setSelectedCandidateDetail(result.candidate);
+      }
+      showToast(`✓ Status successfully saved to Supabase: ${newStatus.replace(/_/g, ' ')}`);
+      return true;
+    } else {
+      showToast(`Failed to update status in Supabase: ${result.message}`);
+      return false;
+    }
+  };
+
+  const handleBulkUpdateCandidateStatus = async (
+    candidateIds: string[],
+    newStatus: CandidateStatus,
+    options?: { notes?: string; selectionCity?: string }
+  ): Promise<boolean> => {
+    showToast(`Executing bulk status update for ${candidateIds.length} candidate(s) in Supabase...`);
+
+    const result = await updateMultipleCandidatesStatusInSupabase(candidateIds, newStatus, {
+      ...options,
+      updatedBy: currentUser?.name || 'Administrator',
+    });
+
+    if (result.success) {
+      if (result.candidates && result.candidates.length > 0) {
+        setCandidates(result.candidates);
+        saveCandidates(result.candidates);
+      }
+      showToast(`✓ Successfully updated & saved ${result.updatedCount} candidate(s) to "${newStatus.replace(/_/g, ' ')}" in Supabase!`);
+      return true;
+    } else {
+      showToast(`Bulk update failed: ${result.message}`);
+      return false;
+    }
   };
 
   // Job Operations
@@ -657,16 +763,6 @@ export default function App() {
                   🔎 Track Status
                 </button>
                 <button
-                  onClick={() => setPublicTab('partners')}
-                  className={`px-4 py-2 rounded-xl transition-all ${
-                    publicTab === 'partners'
-                      ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-                  }`}
-                >
-                  🏢 Sub-Agent Offices
-                </button>
-                <button
                   onClick={() => setPublicTab('about')}
                   className={`px-4 py-2 rounded-xl transition-all ${
                     publicTab === 'about'
@@ -749,15 +845,6 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => {
-                    setPublicTab('partners');
-                    setMobileMenuOpen(false);
-                  }}
-                  className="w-full text-left py-2 px-3 rounded-lg hover:bg-slate-800 text-slate-200"
-                >
-                  🏢 Sub-Agent Offices & Network
-                </button>
-                <button
-                  onClick={() => {
                     setPublicTab('about');
                     setMobileMenuOpen(false);
                   }}
@@ -783,7 +870,7 @@ export default function App() {
                   if (target === 'public_jobs' || target === 'jobs') setPublicTab('jobs');
                   else if (target === 'public_umrah' || target === 'umrah') setPublicTab('umrah');
                   else if (target === 'public_tracking' || target === 'tracking') setPublicTab('tracking');
-                  else if (target === 'public_partners' || target === 'partners') setPublicTab('partners');
+                  else if (target === 'public_partners' || target === 'partners') setPublicTab('about');
                   else if (target === 'public_about' || target === 'about') setPublicTab('about');
                   else if (target === 'public_home' || target === 'home') setPublicTab('home');
                   else setPublicTab(target as any);
@@ -823,12 +910,12 @@ export default function App() {
               />
             )}
 
-            {(publicTab === 'partners' || publicTab === 'about') && (
+            {publicTab === 'about' && (
               <PublicPartnersAndAbout
                 partners={partners}
                 agencyInfo={agencyInfo}
-                viewType={publicTab}
-                defaultSection={publicTab}
+                viewType="about"
+                defaultSection="about"
                 onOpenLogin={() => setIsLoginModalOpen(true)}
                 onRegisterPartner={(newPartner) => {
                   setPartners(getPartners());
@@ -1087,6 +1174,9 @@ export default function App() {
                         }}
                         onViewCandidate={(c) => setSelectedCandidateDetail(c)}
                         onDeleteCandidate={handleDeleteCandidate}
+                        onUpdateCandidate={handleUpdateSingleCandidate}
+                        onUpdateCandidateStatus={handleUpdateCandidateStatus}
+                        onBulkUpdateStatus={handleBulkUpdateCandidateStatus}
                         agencyInfo={agencyInfo}
                       />
                     )}

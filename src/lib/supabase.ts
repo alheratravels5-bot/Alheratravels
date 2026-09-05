@@ -1,6 +1,8 @@
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 import {
   Candidate,
+  CandidateStatus,
+  StatusTimelineEvent,
   JobVacancy,
   UmrahPackage,
   UmrahBooking,
@@ -16,6 +18,7 @@ import {
   MessageLog,
   SupabaseConfig
 } from '../types';
+import { saveCandidateToFirestore } from './firebase';
 
 const STORAGE_KEY_SUPABASE = 'al_hera_supabase_config';
 
@@ -174,21 +177,46 @@ export async function testSupabaseConnection(url?: string, key?: string): Promis
 }
 
 /**
+ * Clean and validate date strings for PostgreSQL DATE / TIMESTAMP columns.
+ * Prevents PostgreSQL error 22007 (invalid input syntax for type date: "")
+ */
+export function cleanDate(val?: any): string | null {
+  if (!val || typeof val !== 'string') return null;
+  const trimmed = val.trim();
+  if (!trimmed || trimmed === 'null' || trimmed === 'undefined' || trimmed === 'Invalid Date') return null;
+  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    return `${match[1]}-${match[2]}-${match[3]}`;
+  }
+  const timestamp = Date.parse(trimmed);
+  if (isNaN(timestamp)) return null;
+  return new Date(timestamp).toISOString().split('T')[0];
+}
+
+/**
  * Format Candidate for Relational PostgreSQL Table
  */
 function formatCandidateRow(c: Candidate, now: string) {
+  // Ensure selectionCity is preserved in status history if available
+  let statusHistory = Array.isArray(c.statusHistory) ? [...c.statusHistory] : [];
+  if (c.selectionCity && statusHistory.length > 0) {
+    statusHistory = statusHistory.map((h, idx) =>
+      idx === 0 ? { ...h, selectionCity: c.selectionCity } : h
+    );
+  }
+
   return {
-    tracking_id: c.trackingId,
-    full_name: c.fullName,
-    father_name: c.fatherName || '',
-    passport_number: c.passportNumber || '',
-    passport_expiry: c.passportExpiry || null,
-    date_of_birth: c.dateOfBirth || null,
+    tracking_id: (c.trackingId || '').trim().toUpperCase(),
+    full_name: (c.fullName || 'Candidate').trim(),
+    father_name: (c.fatherName || '').trim(),
+    passport_number: (c.passportNumber || '').trim().toUpperCase(),
+    passport_expiry: cleanDate(c.passportExpiry),
+    date_of_birth: cleanDate(c.dateOfBirth),
     gender: c.gender || 'Male',
     nationality: c.nationality || 'Indian',
-    phone_number: c.phoneNumber || '',
-    whatsapp_number: c.whatsappNumber || c.phoneNumber || '',
-    email: c.email || '',
+    phone_number: (c.phoneNumber || '').trim(),
+    whatsapp_number: (c.whatsappNumber || c.phoneNumber || '').trim(),
+    email: (c.email || '').trim(),
     address: c.address || '',
     city: c.city || '',
     state: c.state || '',
@@ -204,15 +232,16 @@ function formatCandidateRow(c: Candidate, now: string) {
     id_number: c.idNumber || '',
     wakala_number: c.wakalaNumber || '',
     status: c.status || 'applied',
-    status_history: c.statusHistory || [],
+    status_history: statusHistory,
     flight_details: c.flightDetails || null,
     partner_agent_id: c.partnerOfficeId || c.partnerAgentId || '',
     partner_agent_name: c.partnerOfficeName || c.partnerAgentName || '',
-    partner_office_paid_amount: Number((c as any).partnerOfficePaidAmount) || 0,
+    partner_commission: Number(c.alHeraCommission !== undefined && c.alHeraCommission !== null ? c.alHeraCommission : (c.partnerCommission !== undefined && c.partnerCommission !== null ? c.partnerCommission : 0)),
+    al_hera_commission: Number(c.alHeraCommission !== undefined && c.alHeraCommission !== null ? c.alHeraCommission : (c.partnerCommission !== undefined && c.partnerCommission !== null ? c.partnerCommission : 0)),
     package_fee: Number(c.packageFee) || 0,
     total_paid: Number(c.totalPaid) || 0,
-    balance_due: Number(c.balanceDue) || 0,
-    payment_history: c.paymentHistory || [],
+    balance_due: (Number(c.packageFee) || 0) - (Number(c.totalPaid) || 0),
+    payment_history: Array.isArray(c.paymentHistory) ? c.paymentHistory : [],
     photo_url: c.photoUrl || '',
     passport_scan_url: c.passportScanUrl || '',
     medical_report_url: c.medicalReportUrl || '',
@@ -663,51 +692,89 @@ export async function insertCandidateDirectToSupabase(newCandidate: Candidate): 
 
     let freshCandidates: Candidate[] = [];
     if (!fetchErr && Array.isArray(allTableRows)) {
-      freshCandidates = allTableRows.map((r: any) => ({
-        id: r.id || 'cand-' + r.tracking_id,
-        trackingId: r.tracking_id,
-        fullName: r.full_name,
-        fatherName: r.father_name || '',
-        passportNumber: r.passport_number || '',
-        passportExpiry: r.passport_expiry || '',
-        dateOfBirth: r.date_of_birth || '',
-        gender: r.gender || 'Male',
-        nationality: r.nationality || 'Indian',
-        phoneNumber: r.phone_number || '',
-        whatsappNumber: r.whatsapp_number || r.phone_number || '',
-        email: r.email || '',
-        address: r.address || '',
-        city: r.city || '',
-        state: r.state || '',
-        trade: r.trade || 'General Worker',
-        experienceYears: Number(r.experience_years) || 0,
-        education: r.education || '',
-        jobId: r.job_id || '',
-        jobTitle: r.job_title || '',
-        sponsorName: r.sponsor_name || '',
-        visaCategory: r.visa_category || '',
-        visaNumber: r.visa_number || '',
-        mofaNumber: r.mofa_number || '',
-        idNumber: r.id_number || '',
-        wakalaNumber: r.wakala_number || '',
-        status: r.status || 'applied',
-        statusHistory: Array.isArray(r.status_history) ? r.status_history : [],
-        flightDetails: r.flight_details || undefined,
-        partnerOfficeId: r.partner_agent_id || '',
-        partnerOfficeName: r.partner_agent_name || '',
-        packageFee: Number(r.package_fee) || 0,
-        totalPaid: Number(r.total_paid) || 0,
-        balanceDue: Number(r.balance_due) || 0,
-        paymentHistory: Array.isArray(r.payment_history) ? r.payment_history : [],
-        photoUrl: r.photo_url || '',
-        passportScanUrl: r.passport_scan_url || '',
-        medicalReportUrl: r.medical_report_url || '',
-        tradeCertificateUrl: r.trade_certificate_url || '',
-        cvUrl: r.cv_url || '',
-        remarks: r.remarks || '',
-        createdAt: r.created_at || now,
-        updatedAt: r.updated_at || now,
-      }));
+      freshCandidates = allTableRows.map((r: any) => {
+        const isTarget = r.tracking_id === newCandidate.trackingId;
+        const matchingDocs = isTarget ? (newCandidate.documents || []) : [];
+        const matchingCity = isTarget
+          ? (newCandidate.selectionCity || (() => {
+              if (Array.isArray(r.status_history)) {
+                const ev = r.status_history.find((h: any) => h.selectionCity);
+                if (ev?.selectionCity) return ev.selectionCity;
+              }
+              return undefined;
+            })())
+          : (() => {
+              if (Array.isArray(r.status_history)) {
+                const ev = r.status_history.find((h: any) => h.selectionCity);
+                if (ev?.selectionCity) return ev.selectionCity;
+              }
+              return undefined;
+            })();
+
+        return {
+          id: r.id || (isTarget ? newCandidate.id : 'cand-' + r.tracking_id),
+          trackingId: r.tracking_id,
+          fullName: r.full_name,
+          fatherName: r.father_name || '',
+          passportNumber: r.passport_number || '',
+          passportExpiry: r.passport_expiry || '',
+          dateOfBirth: r.date_of_birth || '',
+          gender: r.gender || 'Male',
+          nationality: r.nationality || 'Indian',
+          phoneNumber: r.phone_number || '',
+          whatsappNumber: r.whatsapp_number || r.phone_number || '',
+          email: r.email || '',
+          address: r.address || '',
+          city: r.city || '',
+          state: r.state || '',
+          trade: r.trade || 'General Worker',
+          experienceYears: Number(r.experience_years) || 0,
+          education: r.education || '',
+          jobId: r.job_id || '',
+          jobTitle: r.job_title || '',
+          sponsorName: r.sponsor_name || '',
+          visaCategory: r.visa_category || '',
+          visaNumber: r.visa_number || '',
+          mofaNumber: r.mofa_number || '',
+          idNumber: r.id_number || '',
+          wakalaNumber: r.wakala_number || '',
+          status: r.status || 'applied',
+          selectionCity: matchingCity,
+          statusHistory: Array.isArray(r.status_history) ? r.status_history : [],
+          flightDetails: r.flight_details || undefined,
+          partnerOfficeId: r.partner_agent_id || '',
+          partnerOfficeName: r.partner_agent_name || '',
+          packageFee: Number(r.package_fee) || 0,
+          totalPaid: Number(r.total_paid) || 0,
+          balanceDue: Number(r.balance_due) || 0,
+          paymentHistory: Array.isArray(r.payment_history) ? r.payment_history : [],
+          photoUrl: r.photo_url || (isTarget ? newCandidate.photoUrl : ''),
+          passportScanUrl: r.passport_scan_url || '',
+          medicalReportUrl: r.medical_report_url || '',
+          tradeCertificateUrl: r.trade_certificate_url || '',
+          cvUrl: r.cv_url || '',
+          remarks: r.remarks || '',
+          documents: matchingDocs,
+          createdAt: r.created_at || now,
+          updatedAt: r.updated_at || now,
+        };
+      });
+    }
+
+    // Ensure newCandidate is represented in freshCandidates
+    const existingIdx = freshCandidates.findIndex((c) => c.trackingId === newCandidate.trackingId);
+    if (existingIdx >= 0) {
+      freshCandidates[existingIdx] = {
+        ...freshCandidates[existingIdx],
+        ...newCandidate,
+        id: freshCandidates[existingIdx].id || newCandidate.id,
+        trackingId: newCandidate.trackingId,
+        documents: newCandidate.documents || freshCandidates[existingIdx].documents || [],
+        selectionCity: newCandidate.selectionCity || freshCandidates[existingIdx].selectionCity,
+        updatedAt: now,
+      };
+    } else {
+      freshCandidates.unshift(newCandidate);
     }
 
     // 3. Sync to central document store
@@ -720,6 +787,161 @@ export async function insertCandidateDirectToSupabase(newCandidate: Candidate): 
 
     // 4. Broadcast Realtime Sync Event
     if (realtimeChannelInstance) {
+      try {
+        realtimeChannelInstance.send({
+          type: 'broadcast',
+          event: 'sync_update',
+          payload: { key: 'candidates', timestamp: now },
+        });
+      } catch {
+        // Safe broadcast fallback
+      }
+    }
+
+    const savedCand = freshCandidates.find((c) => c.trackingId === newCandidate.trackingId) || newCandidate;
+
+    return {
+      success: true,
+      message: `Candidate ${newCandidate.fullName} (${newCandidate.trackingId}) successfully inserted to Supabase public.candidates table!`,
+      candidate: savedCand,
+      candidates: freshCandidates,
+    };
+  } catch (err: any) {
+    console.error('Error in insertCandidateDirectToSupabase:', err);
+    return {
+      success: false,
+      message: err?.message || 'Error inserting candidate into Supabase database.',
+    };
+  }
+}
+
+/**
+ * Direct awaited UPDATE of a single candidate's milestone status in Supabase public.candidates table.
+ * Appends to status_history, updates updated_at, synchronizes central store, and refreshes candidate data.
+ */
+export async function updateCandidateStatusDirectInSupabase(
+  candidateId: string,
+  newStatus: CandidateStatus,
+  options?: {
+    notes?: string;
+    updatedBy?: string;
+    selectionCity?: string;
+    trackingId?: string;
+    visaNumber?: string;
+    wakalaNumber?: string;
+    mofaNumber?: string;
+    flightDetails?: any;
+    contractNumber?: string;
+    contractDate?: string;
+  }
+): Promise<{
+  success: boolean;
+  message: string;
+  candidate?: Candidate;
+  candidates?: Candidate[];
+}> {
+  const supabase = getSupabase();
+  const now = new Date().toISOString();
+
+  if (!supabase) {
+    return {
+      success: false,
+      message: 'Supabase client is not connected or configured.',
+    };
+  }
+
+  try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidateId);
+
+    // 1. Locate candidate row in Supabase
+    let findQuery = supabase.from('candidates').select('*');
+    if (isUuid) {
+      findQuery = findQuery.eq('id', candidateId);
+    } else if (options?.trackingId) {
+      findQuery = findQuery.eq('tracking_id', options.trackingId);
+    } else {
+      findQuery = findQuery.or(`id.eq.${candidateId},tracking_id.eq.${candidateId}`);
+    }
+
+    const { data: foundRows, error: findErr } = await findQuery;
+    if (findErr) {
+      console.error('Error finding candidate in Supabase:', findErr);
+      throw new Error(findErr.message || 'Candidate lookup error in Supabase');
+    }
+
+    if (!foundRows || foundRows.length === 0) {
+      throw new Error(`Candidate with ID ${candidateId} could not be found in Supabase database.`);
+    }
+
+    const dbRow = foundRows[0];
+    const targetUuid = dbRow.id;
+    const existingHistory: StatusTimelineEvent[] = Array.isArray(dbRow.status_history) ? dbRow.status_history : [];
+
+    // 2. Construct new Status Timeline Event
+    const newHistoryEvent: StatusTimelineEvent = {
+      id: 'sth-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+      status: newStatus,
+      timestamp: now,
+      updatedBy: options?.updatedBy || 'Operations Admin',
+      notes: options?.notes || (newStatus === 'interview_selected' && options?.selectionCity
+        ? `Candidate interviewed & selected for ${dbRow.trade || 'employment'} in ${options.selectionCity}.`
+        : `Status transitioned to ${newStatus.replace(/_/g, ' ')}`),
+      selectionCity: newStatus === 'interview_selected' ? (options?.selectionCity || undefined) : undefined,
+    };
+
+    const updatedHistory = [newHistoryEvent, ...existingHistory];
+
+    const updatePayload: any = {
+      status: newStatus,
+      status_history: updatedHistory,
+      updated_at: now,
+    };
+    if (options?.visaNumber) updatePayload.visa_number = options.visaNumber;
+    if (options?.wakalaNumber) updatePayload.wakala_number = options.wakalaNumber;
+    if (options?.mofaNumber) updatePayload.mofa_number = options.mofaNumber;
+    if (options?.flightDetails) updatePayload.flight_details = options.flightDetails;
+
+    // 3. Awaited UPDATE query to public.candidates table
+    const { data: updatedRows, error: updateErr } = await supabase
+      .from('candidates')
+      .update(updatePayload)
+      .eq('id', targetUuid)
+      .select();
+
+    if (updateErr) {
+      console.error('Supabase awaited UPDATE error:', updateErr);
+      throw new Error(updateErr.message || 'Failed to update candidate status in Supabase table');
+    }
+
+    if (!updatedRows || updatedRows.length === 0) {
+      throw new Error('Supabase UPDATE statement did not match any row to update.');
+    }
+
+    // 4. Fetch fresh candidates list directly from Supabase
+    const freshResult = await fetchCandidatesDirectFromSupabase();
+    const freshCandidates = freshResult.candidates;
+
+    // 5. Update central document store al_hera_sync_store to ensure complete parity
+    if (freshCandidates.length > 0) {
+      await supabase.from('al_hera_sync_store').upsert(
+        { key: 'candidates', data: freshCandidates, updated_at: now },
+        { onConflict: 'key' }
+      );
+    }
+
+    const updatedCand = freshCandidates.find((c) => c.id === targetUuid || c.trackingId === dbRow.tracking_id);
+
+    // 6. Firestore sync for candidate record per project standards
+    if (updatedCand) {
+      try {
+        await saveCandidateToFirestore(updatedCand);
+      } catch (fErr) {
+        console.warn('Firestore mirror save warning:', fErr);
+      }
+    }
+
+    // 7. Broadcast Realtime Sync Event
+    if (realtimeChannelInstance) {
       realtimeChannelInstance.send({
         type: 'broadcast',
         event: 'sync_update',
@@ -729,15 +951,286 @@ export async function insertCandidateDirectToSupabase(newCandidate: Candidate): 
 
     return {
       success: true,
-      message: `Candidate ${newCandidate.fullName} (${newCandidate.trackingId}) successfully inserted to Supabase public.candidates table!`,
-      candidate: freshCandidates.find((c) => c.trackingId === newCandidate.trackingId) || newCandidate,
+      message: `Candidate ${dbRow.full_name} (${dbRow.tracking_id}) status updated to ${newStatus.replace(/_/g, ' ')} in Supabase!`,
+      candidate: updatedCand,
       candidates: freshCandidates,
     };
   } catch (err: any) {
-    console.error('Error in insertCandidateDirectToSupabase:', err);
+    console.error('Error in updateCandidateStatusDirectInSupabase:', err);
     return {
       success: false,
-      message: err?.message || 'Error inserting candidate into Supabase database.',
+      message: err?.message || 'Failed to update candidate status in Supabase.',
+    };
+  }
+}
+
+/**
+ * Bulk update multiple candidates' milestone status in Supabase with awaited UPDATE requests.
+ * Updates each row in public.candidates table, appends to status_history, and re-fetches fresh data.
+ */
+export async function updateMultipleCandidatesStatusInSupabase(
+  candidateIds: string[],
+  newStatus: CandidateStatus,
+  options?: {
+    notes?: string;
+    updatedBy?: string;
+    selectionCity?: string;
+  }
+): Promise<{
+  success: boolean;
+  message: string;
+  updatedCount: number;
+  candidates?: Candidate[];
+}> {
+  const supabase = getSupabase();
+  const now = new Date().toISOString();
+
+  if (!supabase) {
+    return {
+      success: false,
+      message: 'Supabase client is not configured or connected.',
+      updatedCount: 0,
+    };
+  }
+
+  if (!candidateIds || candidateIds.length === 0) {
+    return {
+      success: false,
+      message: 'No candidates selected for bulk status update.',
+      updatedCount: 0,
+    };
+  }
+
+  try {
+    let updatedCount = 0;
+    const errors: string[] = [];
+
+    // For each candidate, perform an awaited UPDATE query
+    for (const candId of candidateIds) {
+      try {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candId);
+
+        let findQ = supabase.from('candidates').select('*');
+        if (isUuid) {
+          findQ = findQ.eq('id', candId);
+        } else {
+          findQ = findQ.or(`id.eq.${candId},tracking_id.eq.${candId}`);
+        }
+
+        const { data: rows, error: fErr } = await findQ;
+        if (fErr || !rows || rows.length === 0) {
+          errors.push(`Candidate ${candId}: Not found in Supabase`);
+          continue;
+        }
+
+        const dbRow = rows[0];
+        const existingHistory = Array.isArray(dbRow.status_history) ? dbRow.status_history : [];
+
+        const newEvent: StatusTimelineEvent = {
+          id: 'sth-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+          status: newStatus,
+          timestamp: now,
+          updatedBy: options?.updatedBy || 'Operations Admin',
+          notes: options?.notes || (newStatus === 'interview_selected' && options?.selectionCity
+            ? `Candidate interviewed & selected in ${options.selectionCity}.`
+            : `Bulk status update to ${newStatus.replace(/_/g, ' ')}`),
+          selectionCity: newStatus === 'interview_selected' ? (options?.selectionCity || undefined) : undefined,
+        };
+
+        const { error: upErr } = await supabase
+          .from('candidates')
+          .update({
+            status: newStatus,
+            status_history: [newEvent, ...existingHistory],
+            updated_at: now,
+          })
+          .eq('id', dbRow.id);
+
+        if (upErr) {
+          errors.push(`Candidate ${dbRow.tracking_id}: ${upErr.message}`);
+        } else {
+          updatedCount++;
+        }
+      } catch (innerErr: any) {
+        errors.push(`Candidate ${candId}: ${innerErr?.message}`);
+      }
+    }
+
+    if (updatedCount === 0 && errors.length > 0) {
+      throw new Error(`Failed to update candidates in Supabase: ${errors.join(', ')}`);
+    }
+
+    // Fetch freshly refreshed candidates from Supabase
+    const freshResult = await fetchCandidatesDirectFromSupabase();
+    const freshCandidates = freshResult.candidates;
+
+    // Update central document store al_hera_sync_store
+    if (freshCandidates.length > 0) {
+      await supabase.from('al_hera_sync_store').upsert(
+        { key: 'candidates', data: freshCandidates, updated_at: now },
+        { onConflict: 'key' }
+      );
+    }
+
+    // Broadcast Realtime Event
+    if (realtimeChannelInstance) {
+      realtimeChannelInstance.send({
+        type: 'broadcast',
+        event: 'sync_update',
+        payload: { key: 'candidates', timestamp: now },
+      });
+    }
+
+    return {
+      success: true,
+      message: `Successfully updated status to ${newStatus.replace(/_/g, ' ')} for ${updatedCount} candidate(s) in Supabase!`,
+      updatedCount,
+      candidates: freshCandidates,
+    };
+  } catch (err: any) {
+    console.error('Error in updateMultipleCandidatesStatusInSupabase:', err);
+    return {
+      success: false,
+      message: err?.message || 'Error executing bulk candidate status update in Supabase.',
+      updatedCount: 0,
+    };
+  }
+}
+
+/**
+ * Direct awaited UPDATE or UPSERT of an entire Candidate dossier to Supabase public.candidates table.
+ */
+export async function updateCandidateDirectInSupabase(
+  updatedCandidate: Candidate
+): Promise<{
+  success: boolean;
+  message: string;
+  candidate?: Candidate;
+  candidates?: Candidate[];
+}> {
+  const supabase = getSupabase();
+  const now = new Date().toISOString();
+
+  if (!supabase) {
+    return {
+      success: false,
+      message: 'Supabase client is not configured or connected.',
+    };
+  }
+
+  try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(updatedCandidate.id);
+
+    let targetId: string = updatedCandidate.id;
+    if (!isUuid && updatedCandidate.trackingId) {
+      const { data: matched } = await supabase
+        .from('candidates')
+        .select('id, tracking_id')
+        .eq('tracking_id', updatedCandidate.trackingId);
+      if (matched && matched.length > 0) {
+        targetId = matched[0].id;
+      }
+    }
+
+    const formattedRow = formatCandidateRow(updatedCandidate, now);
+
+    let updateSuccess = false;
+    if (targetId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId)) {
+      const { data: updatedData, error: updateErr } = await supabase
+        .from('candidates')
+        .update(formattedRow)
+        .eq('id', targetId)
+        .select();
+
+      if (updateErr) {
+        console.error('Direct Supabase UPDATE error:', updateErr);
+        throw new Error(updateErr.message || 'Failed to update candidate in Supabase table');
+      }
+      updateSuccess = !!(updatedData && updatedData.length > 0);
+    }
+
+    if (!updateSuccess && updatedCandidate.trackingId) {
+      const { data: updatedData, error: updateErr } = await supabase
+        .from('candidates')
+        .update(formattedRow)
+        .eq('tracking_id', updatedCandidate.trackingId)
+        .select();
+
+      if (!updateErr && updatedData && updatedData.length > 0) {
+        updateSuccess = true;
+      }
+    }
+
+    if (!updateSuccess) {
+      const { error: upsertErr } = await supabase
+        .from('candidates')
+        .upsert([formattedRow], { onConflict: 'tracking_id' });
+      if (upsertErr) {
+        throw new Error(upsertErr.message || 'Failed to insert/update candidate in Supabase table');
+      }
+    }
+
+    // Fetch freshly refreshed candidates from Supabase
+    const freshResult = await fetchCandidatesDirectFromSupabase();
+    let freshCandidates = freshResult.candidates;
+
+    // Merge updatedCandidate to ensure documents and custom metadata are not lost
+    freshCandidates = freshCandidates.map((c) => {
+      if (c.trackingId === updatedCandidate.trackingId || c.id === updatedCandidate.id) {
+        return {
+          ...c,
+          ...updatedCandidate,
+          documents: updatedCandidate.documents || c.documents || [],
+          selectionCity: updatedCandidate.selectionCity || c.selectionCity,
+          updatedAt: now,
+        };
+      }
+      return c;
+    });
+
+    // Update central document store
+    if (freshCandidates.length > 0) {
+      await supabase.from('al_hera_sync_store').upsert(
+        { key: 'candidates', data: freshCandidates, updated_at: now },
+        { onConflict: 'key' }
+      );
+    }
+
+    // Mirror to Firestore
+    try {
+      await saveCandidateToFirestore(updatedCandidate);
+    } catch {
+      // Background note
+    }
+
+    // Broadcast Realtime Event
+    if (realtimeChannelInstance) {
+      try {
+        realtimeChannelInstance.send({
+          type: 'broadcast',
+          event: 'sync_update',
+          payload: { key: 'candidates', timestamp: now },
+        });
+      } catch {
+        // Safe broadcast fallback
+      }
+    }
+
+    const freshlySaved = freshCandidates.find(
+      (c) => c.trackingId === updatedCandidate.trackingId || c.id === updatedCandidate.id
+    ) || updatedCandidate;
+
+    return {
+      success: true,
+      message: `Candidate ${updatedCandidate.fullName} (${updatedCandidate.trackingId}) status saved to Supabase!`,
+      candidate: freshlySaved,
+      candidates: freshCandidates,
+    };
+  } catch (err: any) {
+    console.error('Error in updateCandidateDirectInSupabase:', err);
+    return {
+      success: false,
+      message: err?.message || 'Error updating candidate in Supabase database.',
     };
   }
 }
@@ -795,6 +1288,16 @@ export async function fetchCandidatesDirectFromSupabase(): Promise<{
       flightDetails: r.flight_details || undefined,
       partnerOfficeId: r.partner_agent_id || '',
       partnerOfficeName: r.partner_agent_name || '',
+      partnerCommission: (r.al_hera_commission !== undefined && r.al_hera_commission !== null)
+        ? Number(r.al_hera_commission)
+        : (r.partner_commission !== undefined && r.partner_commission !== null)
+          ? Number(r.partner_commission)
+          : 0,
+      alHeraCommission: (r.al_hera_commission !== undefined && r.al_hera_commission !== null)
+        ? Number(r.al_hera_commission)
+        : (r.partner_commission !== undefined && r.partner_commission !== null)
+          ? Number(r.partner_commission)
+          : 0,
       packageFee: Number(r.package_fee) || 0,
       totalPaid: Number(r.total_paid) || 0,
       balanceDue: Number(r.balance_due) || 0,
@@ -805,6 +1308,13 @@ export async function fetchCandidatesDirectFromSupabase(): Promise<{
       tradeCertificateUrl: r.trade_certificate_url || '',
       cvUrl: r.cv_url || '',
       remarks: r.remarks || '',
+      selectionCity: (() => {
+        if (Array.isArray(r.status_history)) {
+          const ev = r.status_history.find((h: any) => h.selectionCity);
+          if (ev?.selectionCity) return ev.selectionCity;
+        }
+        return undefined;
+      })(),
       createdAt: r.created_at || new Date().toISOString(),
       updatedAt: r.updated_at || new Date().toISOString(),
     }));
@@ -1046,20 +1556,69 @@ function mergeCandidates(storeList: Candidate[] = [], tableList: Candidate[] = [
       map.set(key, item);
     } else {
       const existing = map.get(key)!;
-      // Merge records preserving richer detail (documents, payment history, status history)
+      // Stale cache protection: compare timestamps so newer records ALWAYS take precedence
+      const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+      const tableTime = new Date(item.updatedAt || item.createdAt || 0).getTime();
+
+      const isTableNewer = tableTime >= existingTime;
+      const primary = isTableNewer ? item : existing;
+      const secondary = isTableNewer ? existing : item;
+
+      // Deduplicate status history newest first
+      const combinedHistory: StatusTimelineEvent[] = [];
+      const seenHistoryIds = new Set<string>();
+      for (const h of primary.statusHistory || []) {
+        const idKey = h.id || `${h.status}-${h.timestamp}`;
+        if (!seenHistoryIds.has(idKey)) {
+          combinedHistory.push(h);
+          seenHistoryIds.add(idKey);
+        }
+      }
+      for (const h of secondary.statusHistory || []) {
+        const idKey = h.id || `${h.status}-${h.timestamp}`;
+        if (!seenHistoryIds.has(idKey)) {
+          combinedHistory.push(h);
+          seenHistoryIds.add(idKey);
+        }
+      }
+      combinedHistory.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+
       const merged: Candidate = {
-        ...existing,
-        ...item,
-        statusHistory: (existing.statusHistory && existing.statusHistory.length > 0)
-          ? existing.statusHistory
-          : (item.statusHistory || []),
-        paymentHistory: (existing.paymentHistory && existing.paymentHistory.length > 0)
-          ? existing.paymentHistory
-          : (item.paymentHistory || []),
-        documents: (existing.documents && existing.documents.length > 0)
-          ? existing.documents
-          : (item.documents || []),
-        flightDetails: existing.flightDetails || item.flightDetails,
+        ...secondary,
+        ...primary,
+        id: item.id || existing.id, // Prefer relational table UUID
+        trackingId: item.trackingId || existing.trackingId,
+        partnerCommission: (primary.alHeraCommission !== undefined && primary.alHeraCommission !== null)
+          ? Number(primary.alHeraCommission)
+          : (primary.partnerCommission !== undefined && primary.partnerCommission !== null)
+            ? Number(primary.partnerCommission)
+            : (secondary.alHeraCommission !== undefined && secondary.alHeraCommission !== null)
+              ? Number(secondary.alHeraCommission)
+              : (secondary.partnerCommission !== undefined && secondary.partnerCommission !== null)
+                ? Number(secondary.partnerCommission)
+                : 0,
+        alHeraCommission: (primary.alHeraCommission !== undefined && primary.alHeraCommission !== null)
+          ? Number(primary.alHeraCommission)
+          : (primary.partnerCommission !== undefined && primary.partnerCommission !== null)
+            ? Number(primary.partnerCommission)
+            : (secondary.alHeraCommission !== undefined && secondary.alHeraCommission !== null)
+              ? Number(secondary.alHeraCommission)
+              : (secondary.partnerCommission !== undefined && secondary.partnerCommission !== null)
+                ? Number(secondary.partnerCommission)
+                : 0,
+        partnerOfficeId: primary.partnerOfficeId || secondary.partnerOfficeId,
+        partnerOfficeName: primary.partnerOfficeName || secondary.partnerOfficeName,
+        status: primary.status || secondary.status || 'applied',
+        selectionCity: primary.selectionCity || secondary.selectionCity,
+        statusHistory: combinedHistory,
+        paymentHistory: (primary.paymentHistory && primary.paymentHistory.length > 0)
+          ? primary.paymentHistory
+          : (secondary.paymentHistory || []),
+        documents: (primary.documents && primary.documents.length > 0)
+          ? primary.documents
+          : (secondary.documents || []),
+        flightDetails: primary.flightDetails || secondary.flightDetails,
+        updatedAt: isTableNewer ? (item.updatedAt || new Date().toISOString()) : (existing.updatedAt || new Date().toISOString()),
       };
       map.set(key, merged);
     }
@@ -1294,6 +1853,16 @@ export async function pullAllFromSupabase(): Promise<{
           flightDetails: r.flight_details || undefined,
           partnerOfficeId: r.partner_agent_id || '',
           partnerOfficeName: r.partner_agent_name || '',
+          partnerCommission: (r.al_hera_commission !== undefined && r.al_hera_commission !== null)
+            ? Number(r.al_hera_commission)
+            : (r.partner_commission !== undefined && r.partner_commission !== null)
+              ? Number(r.partner_commission)
+              : 0,
+          alHeraCommission: (r.al_hera_commission !== undefined && r.al_hera_commission !== null)
+            ? Number(r.al_hera_commission)
+            : (r.partner_commission !== undefined && r.partner_commission !== null)
+              ? Number(r.partner_commission)
+              : 0,
           packageFee: Number(r.package_fee) || 0,
           totalPaid: Number(r.total_paid) || 0,
           balanceDue: Number(r.balance_due) || 0,

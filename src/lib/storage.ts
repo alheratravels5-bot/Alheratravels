@@ -24,7 +24,7 @@ import {
 } from '../types';
 import { computePartnerFinancials, computeRunningLedger } from './partnerCalculations';
 import { enrichAllJobsWithMetrics, enrichJobWithMetrics, createJobStatusHistoryEvent, computeJobCandidateMetrics } from './jobCalculations';
-import { getSupabase, syncCollectionToSupabase, deleteRecordFromSupabase } from './supabase';
+import { getSupabase, syncCollectionToSupabase, deleteRecordFromSupabase, updateCandidateDirectInSupabase } from './supabase';
 import { getAuthUsers, saveAuthUsers } from './auth';
 import {
   saveCandidateToFirestore,
@@ -1833,7 +1833,22 @@ export const getCandidates = (): Candidate[] => {
     item.packageFee = Number(item.packageFee) || 0;
     item.totalPaid = Number(item.totalPaid) || 0;
     item.balanceDue = item.packageFee - item.totalPaid;
-    item.partnerCommission = Number(item.partnerCommission) || 0;
+    
+    // Explicit commission handling: if manually set to 0, preserve 0 and never revert to defaults
+    const hasAlHeraComm = item.alHeraCommission !== undefined && item.alHeraCommission !== null;
+    const hasPartnerComm = item.partnerCommission !== undefined && item.partnerCommission !== null;
+    if (hasAlHeraComm) {
+      const commVal = Math.max(0, Number(item.alHeraCommission) || 0);
+      item.alHeraCommission = commVal;
+      item.partnerCommission = commVal;
+    } else if (hasPartnerComm) {
+      const commVal = Math.max(0, Number(item.partnerCommission) || 0);
+      item.alHeraCommission = commVal;
+      item.partnerCommission = commVal;
+    } else {
+      item.alHeraCommission = 0;
+      item.partnerCommission = 0;
+    }
 
     if (!item.trackingId || item.trackingId === 'undefined' || item.trackingId.trim() === '') {
       const year = new Date().getFullYear();
@@ -2866,6 +2881,62 @@ export const updateCandidatePaymentRecord = (
     message: `Payment ${updatedPayment.receiptNumber} updated successfully. New candidate balance: ₹${candidate.balanceDue.toLocaleString('en-IN')}.`,
     candidate,
     payment: updatedPayment,
+  };
+};
+
+/**
+ * Update a candidate's partner commission
+ */
+export const updateCandidateCommission = (
+  candidateIdOrTrackingId: string,
+  newCommission: number,
+  user: string = 'Accounts Desk'
+): {
+  success: boolean;
+  message: string;
+  candidate?: Candidate;
+} => {
+  const candidates = getCandidates();
+  const candIndex = candidates.findIndex(
+    (c) => c.id === candidateIdOrTrackingId || c.trackingId === candidateIdOrTrackingId
+  );
+
+  if (candIndex === -1) {
+    return {
+      success: false,
+      message: `Candidate ${candidateIdOrTrackingId} not found in database.`,
+    };
+  }
+
+  const candidate = { ...candidates[candIndex] };
+  const commVal = Math.max(0, Number(newCommission) || 0);
+  candidate.partnerCommission = commVal;
+  candidate.alHeraCommission = commVal;
+  candidate.updatedAt = new Date().toISOString();
+
+  candidates[candIndex] = candidate;
+  saveCandidates(candidates);
+  saveCandidateToFirestore(candidate);
+
+  try {
+    updateCandidateDirectInSupabase(candidate).catch((err) => {
+      console.warn('Supabase commission update notice:', err);
+    });
+  } catch {
+    // ignore
+  }
+
+  // Sync partner offices if candidate is attached to a partner
+  if (candidate.partnerOfficeId) {
+    savePartners(getPartners());
+  }
+
+  return {
+    success: true,
+    message: commVal === 0
+      ? `Al-Hera Travels commission for ${candidate.fullName} successfully set to ₹0 (No Commission).`
+      : `Al-Hera Travels commission for ${candidate.fullName} successfully updated to ₹${commVal.toLocaleString('en-IN')}.`,
+    candidate,
   };
 };
 

@@ -430,8 +430,8 @@ export const PublicTracking: React.FC<PublicTrackingProps> = ({
                   <span className="font-medium text-slate-800">{searchedCandidate.passportExpiry || '—'}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 font-semibold block">Partner Office / Agent:</span>
-                  <span className="font-medium text-slate-800">{searchedCandidate.partnerOfficeName || 'Direct Al-Hera'}</span>
+                  <span className="text-slate-500 font-semibold block">Processing Office:</span>
+                  <span className="font-medium text-slate-800">Al-Hera Travels Overseas HQ</span>
                 </div>
               </div>
 

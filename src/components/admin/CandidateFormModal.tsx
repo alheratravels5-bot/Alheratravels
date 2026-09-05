@@ -16,18 +16,21 @@ import {
   CheckCircle2,
   Eye,
   FileSpreadsheet,
-  FileCheck
+  FileCheck,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { Candidate, CandidateStatus, JobVacancy, PartnerOffice, POPULAR_SELECTION_CITIES } from '../../types';
 import { getJobs, getPartners, getCandidates } from '../../lib/storage';
 import { enrichAllJobsWithMetrics } from '../../lib/jobCalculations';
+import { compressImage } from '../../lib/imageUtils';
 
 interface CandidateFormModalProps {
   candidate?: Candidate | null;
   candidateToEdit?: Candidate | null;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (candidateData: Partial<Candidate>) => void;
+  onSave: (candidateData: Partial<Candidate>) => Promise<any> | void;
   partners?: PartnerOffice[];
   jobs?: JobVacancy[];
 }
@@ -75,9 +78,11 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
   const [selectionCity, setSelectionCity] = useState('');
   const [packageFee, setPackageFee] = useState(65000);
   const [totalPaid, setTotalPaid] = useState(0);
-  const [partnerCommission, setPartnerCommission] = useState(6000);
+  const [partnerCommission, setPartnerCommission] = useState<number | string>(0);
   const [remarks, setRemarks] = useState('');
   const [photoUrl, setPhotoUrl] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Documents state
   const [documents, setDocuments] = useState<UploadedDocItem[]>([]);
@@ -119,7 +124,12 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
       setSelectionCity(activeCandidate.selectionCity || '');
       setPackageFee(activeCandidate.packageFee);
       setTotalPaid(activeCandidate.totalPaid);
-      setPartnerCommission(activeCandidate.partnerCommission || 6000);
+      const candComm = activeCandidate.alHeraCommission !== undefined && activeCandidate.alHeraCommission !== null
+        ? Number(activeCandidate.alHeraCommission)
+        : (activeCandidate.partnerCommission !== undefined && activeCandidate.partnerCommission !== null
+          ? Number(activeCandidate.partnerCommission)
+          : 0);
+      setPartnerCommission(candComm);
       setRemarks(activeCandidate.remarks || '');
       setPhotoUrl(activeCandidate.photoUrl || '');
       setDocuments(activeCandidate.documents || []);
@@ -150,7 +160,7 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
       setSelectionCity('');
       setPackageFee(65000);
       setTotalPaid(0);
-      setPartnerCommission(6000);
+      setPartnerCommission(0);
       setRemarks('');
       setPhotoUrl('');
       setDocuments([]);
@@ -168,18 +178,23 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
     }
   };
 
-  // Handle Photo Upload
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle Photo Upload with compression
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (event.target?.result) {
-        setPhotoUrl(event.target.result as string);
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressed = await compressImage(file, 400, 400, 0.82);
+      setPhotoUrl(compressed);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setPhotoUrl(event.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   // Handle Document Upload
@@ -217,40 +232,60 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
     setDocuments((prev) => prev.filter((d) => d.id !== docId));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
+
+    const trimmedFullName = fullName.trim();
+    if (!trimmedFullName || trimmedFullName.length < 2) {
+      setFormError('Please provide candidate full name (at least 2 characters).');
+      return;
+    }
+
+    const trimmedPassport = passportNumber.trim().toUpperCase();
+    if (!trimmedPassport || trimmedPassport.length < 4) {
+      setFormError('Please provide a valid passport number (at least 4 characters).');
+      return;
+    }
+
+    const trimmedPhone = phoneNumber.trim();
+    if (!trimmedPhone) {
+      setFormError('Please provide contact calling phone number.');
+      return;
+    }
 
     const selectedPartner = partners.find((p) => p.id === partnerOfficeId);
     const selectedJob = jobs.find((j) => j.id === jobId);
-    const finalTrackingId = trackingId.trim() || `AHT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const finalTrackingId = trackingId.trim().toUpperCase() || `AHT-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
 
     const data: Partial<Candidate> = {
       ...(activeCandidate ? { id: activeCandidate.id } : { id: 'cand-' + Date.now() }),
-      trackingId: finalTrackingId.toUpperCase(),
-      fullName,
-      fatherName,
-      passportNumber: passportNumber.toUpperCase(),
-      passportExpiry,
-      dateOfBirth,
+      trackingId: finalTrackingId,
+      fullName: trimmedFullName,
+      fatherName: fatherName.trim(),
+      passportNumber: trimmedPassport,
+      passportExpiry: passportExpiry.trim(),
+      dateOfBirth: dateOfBirth || '1995-01-01',
       gender,
       nationality: 'Indian',
-      phoneNumber,
-      whatsappNumber: whatsappNumber || phoneNumber,
-      email,
-      city,
-      state,
-      address: `${city}, ${state}`,
-      trade,
-      experienceYears: Number(experienceYears),
+      phoneNumber: trimmedPhone,
+      whatsappNumber: whatsappNumber.trim() || trimmedPhone,
+      email: email.trim(),
+      city: city.trim(),
+      state: state.trim(),
+      address: `${city.trim()}, ${state.trim()}`,
+      trade: trade.trim() || 'General Worker',
+      experienceYears: Number(experienceYears) || 0,
       education,
       jobId,
       jobTitle: selectedJob?.title || trade,
       sponsorName: sponsorName || selectedJob?.companyName,
       partnerOfficeId: partnerOfficeId || undefined,
       partnerOfficeName: selectedPartner?.agencyName,
-      partnerCommission: Number(partnerCommission),
-      visaNumber,
-      wakalaNumber,
+      partnerCommission: partnerCommission === '' ? 0 : Math.max(0, Number(partnerCommission) || 0),
+      alHeraCommission: partnerCommission === '' ? 0 : Math.max(0, Number(partnerCommission) || 0),
+      visaNumber: visaNumber.trim(),
+      wakalaNumber: wakalaNumber.trim(),
       status,
       selectionCity: selectionCity.trim() || undefined,
       statusHistory: activeCandidate?.statusHistory?.length ? activeCandidate.statusHistory : [
@@ -260,11 +295,12 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
           timestamp: new Date().toISOString(),
           updatedBy: 'Admin Desk Entry',
           notes: 'Candidate registered in Al-Hera ERP system.',
+          selectionCity: selectionCity.trim() || undefined,
         }
       ],
-      packageFee: Number(packageFee),
-      totalPaid: Number(totalPaid),
-      balanceDue: Number(packageFee) - Number(totalPaid),
+      packageFee: Number(packageFee) || 0,
+      totalPaid: Number(totalPaid) || 0,
+      balanceDue: (Number(packageFee) || 0) - (Number(totalPaid) || 0),
       paymentHistory: activeCandidate?.paymentHistory || [],
       remarks,
       photoUrl: photoUrl || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop&q=80',
@@ -273,8 +309,21 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
       updatedAt: new Date().toISOString(),
     };
 
-    onSave(data);
-    onClose();
+    setIsSaving(true);
+    try {
+      const result: any = await onSave(data);
+      if (result && result.success === false) {
+        setFormError(result.message || 'Failed to save candidate to database. Please check input and retry.');
+        setIsSaving(false);
+        return;
+      }
+      setIsSaving(false);
+      onClose();
+    } catch (err: any) {
+      console.error('Candidate save failure:', err);
+      setFormError(err?.message || 'Error occurred while saving candidate. Please try again.');
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -297,6 +346,16 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6 max-h-[80vh] overflow-y-auto text-xs">
+          {formError && (
+            <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-xl flex items-start gap-2.5 animate-shake shadow-sm">
+              <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <span className="font-bold block text-red-800">Cannot save candidate record</span>
+                <p className="text-xs text-red-700 mt-0.5">{formError}</p>
+              </div>
+            </div>
+          )}
+
           {/* Tracking ID & Header Notice */}
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
             <div>
@@ -479,16 +538,21 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
                   required
                   placeholder="+91-9876543210"
                   value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPhoneNumber(val);
+                    if (!whatsappNumber || whatsappNumber === phoneNumber) {
+                      setWhatsappNumber(val);
+                    }
+                  }}
                   className="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">WhatsApp Number *</label>
+                <label className="block font-bold text-slate-700 mb-1">WhatsApp Number</label>
                 <input
                   type="tel"
-                  required
                   placeholder="+91-9876543210"
                   value={whatsappNumber}
                   onChange={(e) => setWhatsappNumber(e.target.value)}
@@ -849,14 +913,69 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Partner Commission (INR)</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={partnerCommission}
-                  onChange={(e) => setPartnerCommission(Number(e.target.value))}
-                  className="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-bold text-slate-700 text-xs">Al-Hera Commission (INR)</label>
+                  <button
+                    type="button"
+                    onClick={() => setPartnerCommission(0)}
+                    className={`text-[11px] px-2 py-0.5 rounded font-semibold transition-all ${
+                      Number(partnerCommission) === 0
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100 border border-transparent'
+                    }`}
+                  >
+                    Set Zero (₹0)
+                  </button>
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">₹</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={partnerCommission}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setPartnerCommission(v === '' ? '' : Math.max(0, Number(v)));
+                    }}
+                    placeholder="0 (Enter manual amount or set 0 for no commission)"
+                    className="w-full text-xs pl-7 border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none font-mono font-bold text-amber-900"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                  <span className="text-[10px] text-slate-500">Quick Rates:</span>
+                  <button
+                    type="button"
+                    onClick={() => setPartnerCommission(0)}
+                    className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded border transition-colors ${
+                      Number(partnerCommission) === 0
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                    }`}
+                  >
+                    ₹0 (None)
+                  </button>
+                  {[3000, 5000, 6000, 8000, 10000].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setPartnerCommission(amt)}
+                      className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded border transition-colors ${
+                        Number(partnerCommission) === amt
+                          ? 'bg-amber-600 text-white border-amber-600'
+                          : 'bg-slate-50 hover:bg-amber-50 text-slate-700 hover:text-amber-900 border-slate-200'
+                      }`}
+                    >
+                      ₹{amt.toLocaleString('en-IN')}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  {Number(partnerCommission) === 0 ? (
+                    <span className="text-emerald-700 font-semibold">Zero Commission: No commission will be added and ₹0 will be shown.</span>
+                  ) : (
+                    <span>Manual commission: ₹{Number(partnerCommission || 0).toLocaleString('en-IN')} credited to Al-Hera Travels.</span>
+                  )}
+                </p>
               </div>
             </div>
           </div>
@@ -876,16 +995,27 @@ export const CandidateFormModal: React.FC<CandidateFormModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold transition-colors"
+              disabled={isSaving}
+              className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 rounded-xl bg-[#0F1E36] hover:bg-[#1A3258] text-white font-bold shadow-lg transition-all flex items-center gap-2"
+              disabled={isSaving}
+              className="px-6 py-2.5 rounded-xl bg-[#0F1E36] hover:bg-[#1A3258] text-white font-bold shadow-lg transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Save className="w-4 h-4 text-amber-400" />
-              <span>{activeCandidate ? 'Update Candidate Record' : 'Save & Allocate Tracking ID'}</span>
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+                  <span>Saving to Database...</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 text-amber-400" />
+                  <span>{activeCandidate ? 'Update Candidate Record' : 'Save & Allocate Tracking ID'}</span>
+                </>
+              )}
             </button>
           </div>
         </form>

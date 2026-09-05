@@ -22,7 +22,8 @@ import {
   MessageCircle,
   HelpCircle,
   FileCheck,
-  Globe2
+  Globe2,
+  Lock
 } from 'lucide-react';
 import { AgencyInfo, PartnerOffice } from '../../types';
 import { getAgencyInfo, getPartners, savePartners } from '../../lib/storage';
@@ -56,8 +57,8 @@ const FAQS = [
     answer: 'Our all-inclusive Umrah packages include round-trip flights on Saudi Airlines/Flynas, approved Umrah eVisa with medical insurance, star-rated hotel accommodation walking distance from the Haramain, 3 daily Indian buffet meals, luxury AC coach transfers, and guided historical Ziyarat in Makkah and Madinah.'
   },
   {
-    question: 'How can regional agencies partner with Al-Hera Travels as authorized sub-agents?',
-    answer: 'Registered manpower consultancies and tour operators across India can submit their agency credentials using the "Sub-Agent Registration" form below. Our operations director will review and activate your partner portal code.'
+    question: 'How do authorized sub-agents and partner offices access candidate rosters and accounts?',
+    answer: 'Authorized partner offices and corporate affiliates can access their private management dashboard by clicking "Staff & Partner Login" with their assigned credentials. For data confidentiality and regulatory compliance, internal partner directories, candidate rosters, commissions, and financial ledgers are strictly restricted from public access.'
   }
 ];
 
@@ -70,14 +71,9 @@ export const PublicPartnersAndAbout: React.FC<PublicPartnersAndAboutProps> = ({
   onNavigate,
   onRegisterPartner,
 }) => {
-  const [activeTab, setActiveTab] = useState<'about' | 'partners'>(
-    (defaultSection === 'partners' || viewType === 'partners') ? 'partners' : 'about'
-  );
-  const [partnerSearch, setPartnerSearch] = useState('');
-  const [selectedStateFilter, setSelectedStateFilter] = useState('all');
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
 
-  // Partner Registration Form State
+  // Partner Registration / Empanelment Inquiry Form State
   const [isPartnerFormOpen, setIsPartnerFormOpen] = useState(false);
   const [partnerAgencyName, setPartnerAgencyName] = useState('');
   const [partnerContactPerson, setPartnerContactPerson] = useState('');
@@ -88,21 +84,6 @@ export const PublicPartnersAndAbout: React.FC<PublicPartnersAndAboutProps> = ({
 
   const agency = propAgency || getAgencyInfo();
   const allPartners: PartnerOffice[] = propPartners || getPartners();
-
-  const states = ['all', ...Array.from(new Set(allPartners.map((p) => p.state || p.city).filter(Boolean)))];
-
-  const filteredPartners = allPartners.filter((p) => {
-    const q = partnerSearch.toLowerCase();
-    const matchesSearch =
-      (p.agencyName || '').toLowerCase().includes(q) ||
-      (p.contactPerson || '').toLowerCase().includes(q) ||
-      (p.city || '').toLowerCase().includes(q) ||
-      (p.state || '').toLowerCase().includes(q);
-
-    const matchesState = selectedStateFilter === 'all' || p.state === selectedStateFilter || p.city === selectedStateFilter;
-
-    return matchesSearch && matchesState;
-  });
 
   const handlePartnerInquirySubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -155,37 +136,8 @@ export const PublicPartnersAndAbout: React.FC<PublicPartnersAndAboutProps> = ({
     <div className="min-h-screen bg-slate-50 py-10 px-4 sm:px-8 text-slate-900">
       <div className="max-w-6xl mx-auto space-y-10">
         
-        {/* Navigation Switcher Bar */}
-        <div className="flex justify-center">
-          <div className="inline-flex bg-white p-1.5 rounded-2xl border border-slate-200 shadow-md">
-            <button
-              onClick={() => setActiveTab('about')}
-              className={`px-6 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
-                activeTab === 'about'
-                  ? 'bg-[#0F1E36] text-amber-400 shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-              }`}
-            >
-              <Compass className="w-4 h-4" />
-              <span>About Al-Hera & License</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('partners')}
-              className={`px-6 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
-                activeTab === 'partners'
-                  ? 'bg-[#0F1E36] text-amber-400 shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-              }`}
-            >
-              <Building2 className="w-4 h-4" />
-              <span>Sub-Agent Offices & Network ({allPartners.length})</span>
-            </button>
-          </div>
-        </div>
-
-        {/* TAB 1: ABOUT AL-HERA & LICENSE PARTICULARS */}
-        {activeTab === 'about' && (
-          <div className="space-y-12 animate-fade-in">
+        {/* Unified Corporate About & Licensing View */}
+        <div className="space-y-12 animate-fade-in">
             {/* Hero Banner */}
             <div className="text-center max-w-3xl mx-auto space-y-3">
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-900 text-xs font-bold uppercase tracking-wider">
@@ -283,8 +235,8 @@ export const PublicPartnersAndAbout: React.FC<PublicPartnersAndAboutProps> = ({
                       <strong className="text-purple-300">5,000+ Hujjaj & Mutamireen</strong>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-400">Network Partner Offices:</span>
-                      <strong className="text-emerald-400">{allPartners.length} Cities</strong>
+                      <span className="text-slate-400">Recruitment Network:</span>
+                      <strong className="text-emerald-400">Pan-India & Saudi Arabia</strong>
                     </div>
                   </div>
                 </div>
@@ -380,146 +332,42 @@ export const PublicPartnersAndAbout: React.FC<PublicPartnersAndAboutProps> = ({
                 })}
               </div>
             </div>
-          </div>
-        )}
 
-        {/* TAB 2: SUB-AGENT NETWORK DIRECTORY */}
-        {activeTab === 'partners' && (
-          <div className="space-y-8 animate-fade-in">
-            {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-md">
-              <div>
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold uppercase tracking-wider mb-2">
-                  <Globe2 className="w-3.5 h-3.5" />
-                  National Sourcing & Sub-Agent Network
+            {/* Confidential Sub-Agent & Partner Office Access Card */}
+            <div className="bg-gradient-to-br from-[#0F1E36] to-[#1A3258] text-white p-6 sm:p-10 rounded-3xl border border-slate-700 shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 mt-8">
+              <div className="space-y-2.5 max-w-2xl text-center md:text-left">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold uppercase tracking-wider">
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                  Protected Staff & Sub-Agent Management
                 </div>
-                <h2 className="text-2xl sm:text-3xl font-extrabold text-[#0F1E36] font-display">
-                  Authorized Sub-Agent Offices & Centers
-                </h2>
-                <p className="text-xs sm:text-sm text-slate-600 mt-1">
-                  Verified recruitment partners handling candidate screening, documentation, and trade mobilization.
+                <h3 className="text-xl sm:text-2xl font-black font-display text-white">
+                  Authorized Sub-Agent & Partner Office Portal
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                  In strict compliance with MEA data protection protocols and client confidentiality, all partner office details, contact records, candidate rosters, commission statements, and transaction ledgers are restricted from public display and accessible exclusively to authenticated personnel.
                 </p>
               </div>
 
-              <button
-                onClick={() => setIsPartnerFormOpen(true)}
-                className="px-5 py-3 rounded-2xl bg-[#0F1E36] hover:bg-[#1A3258] text-amber-400 text-xs sm:text-sm font-bold flex items-center gap-2 shadow-lg transition-all shrink-0"
-              >
-                <Building2 className="w-4 h-4" />
-                <span>Register Your Agency</span>
-              </button>
-            </div>
-
-            {/* Search and Filters */}
-            <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-3 items-center justify-between">
-              <div className="relative w-full sm:w-80">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-                <input
-                  type="text"
-                  placeholder="Search partner office, city, person..."
-                  value={partnerSearch}
-                  onChange={(e) => setPartnerSearch(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none bg-slate-50 focus:bg-white"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
-                <span className="text-xs font-bold text-slate-500">Region:</span>
-                <select
-                  value={selectedStateFilter}
-                  onChange={(e) => setSelectedStateFilter(e.target.value)}
-                  className="px-3 py-2 text-xs border border-slate-300 rounded-xl bg-slate-50 font-semibold focus:outline-none"
-                >
-                  <option value="all">All States & Cities</option>
-                  {states.filter(s => s !== 'all').map((st) => (
-                    <option key={st} value={st}>{st}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Partner Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredPartners.map((partner) => {
-                const whatsMsg = `Assalamu Alaikum *${partner.agencyName}*,\n\nI am contacting you regarding overseas Saudi vacancies through *AL-HERA TRAVELS* network.`;
-                const whatsUrl = formatWhatsAppUrl(partner.whatsapp || partner.phone, whatsMsg);
-
-                return (
-                  <div
-                    key={partner.id}
-                    className="bg-white rounded-3xl border border-slate-200 shadow-md hover:shadow-xl transition-all p-6 flex flex-col justify-between space-y-4"
-                  >
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200 font-bold">
-                          {partner.partnerCode || 'AHT-PARTNER'}
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          Authorized
-                        </span>
-                      </div>
-
-                      <div>
-                        <h3 className="font-bold text-base text-[#0F1E36] font-display">
-                          {partner.agencyName}
-                        </h3>
-                        <p className="text-xs text-slate-500 font-medium mt-0.5 flex items-center gap-1">
-                          <Users className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Contact: <strong>{partner.contactPerson}</strong></span>
-                        </p>
-                      </div>
-
-                      <div className="space-y-1.5 text-xs text-slate-600 pt-2 border-t border-slate-100">
-                        <p className="flex items-center gap-1.5">
-                          <MapPin className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                          <span>{partner.city}, {partner.state}</span>
-                        </p>
-                        <p className="flex items-center gap-1.5 font-mono">
-                          <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span>{partner.phone}</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
-                      <a
-                        href={`tel:${partner.phone.replace(/[^0-9+]/g, '')}`}
-                        className="flex-1 py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center justify-center gap-1 transition-colors"
-                      >
-                        <Phone className="w-3.5 h-3.5" />
-                        <span>Call Office</span>
-                      </a>
-
-                      <a
-                        href={whatsUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1 transition-colors shadow-xs"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>WhatsApp</span>
-                      </a>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {filteredPartners.length === 0 && (
-              <div className="bg-white p-12 text-center rounded-3xl border border-slate-200 text-slate-500">
-                <Building2 className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                <p className="font-bold text-sm">No partner offices found matching "{partnerSearch}".</p>
+              <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto shrink-0">
                 <button
-                  onClick={() => { setPartnerSearch(''); setSelectedStateFilter('all'); }}
-                  className="mt-3 px-4 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                  type="button"
+                  onClick={onOpenLogin}
+                  className="w-full sm:w-auto px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs sm:text-sm shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
-                  Clear Search Filters
+                  <Lock className="w-4 h-4" />
+                  <span>Partner & Staff Login</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsPartnerFormOpen(true)}
+                  className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
+                >
+                  <Building2 className="w-4 h-4 text-amber-400" />
+                  <span>Empanelment Inquiry</span>
                 </button>
               </div>
-            )}
+            </div>
           </div>
-        )}
 
         {/* Modal: Sub-Agent Registration Form */}
         {isPartnerFormOpen && (

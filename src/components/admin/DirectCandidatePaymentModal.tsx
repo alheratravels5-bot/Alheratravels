@@ -387,7 +387,7 @@ export const DirectCandidatePaymentModal: React.FC<DirectCandidatePaymentModalPr
 
             {/* Selected Candidate Detailed Pill */}
             {currentCandidate ? (
-              <div className="bg-white p-3.5 rounded-lg border border-slate-200/80 shadow-2xs grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-center">
+              <div className="bg-white p-3.5 rounded-lg border border-slate-200/80 shadow-2xs grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-center">
                 <div className="lg:col-span-2">
                   <span className="text-[10px] font-bold uppercase text-slate-400 block">Candidate Identity</span>
                   <div className="font-black text-slate-900 text-sm">{currentCandidate.fullName}</div>
@@ -410,7 +410,7 @@ export const DirectCandidatePaymentModal: React.FC<DirectCandidatePaymentModalPr
                 </div>
 
                 <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Total Paid to Date</span>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Total Paid</span>
                   <div className="font-bold text-emerald-700 text-xs">
                     ₹{(Number(currentCandidate.totalPaid) || 0).toLocaleString('en-IN')}
                   </div>
@@ -419,10 +419,33 @@ export const DirectCandidatePaymentModal: React.FC<DirectCandidatePaymentModalPr
 
                 <div className="bg-rose-50/60 p-2 rounded-md border border-rose-100">
                   <span className="text-[10px] font-bold uppercase text-rose-700 block">Balance Due</span>
-                  <div className="font-black text-rose-700 text-sm">
+                  <div className="font-black text-rose-700 text-xs">
                     ₹{(Number(currentCandidate.balanceDue) || 0).toLocaleString('en-IN')}
                   </div>
                   <span className="text-[10px] text-rose-600 font-medium">Pending collection</span>
+                </div>
+
+                <div className="bg-amber-50/70 p-2 rounded-md border border-amber-200/80">
+                  <span className="text-[10px] font-bold uppercase text-amber-800 block">Al-Hera Commission</span>
+                  <div className="flex items-center gap-1">
+                    <span className="font-black text-amber-900 text-xs font-mono">
+                      ₹{(
+                        currentCandidate.alHeraCommission !== undefined && currentCandidate.alHeraCommission !== null
+                          ? Number(currentCandidate.alHeraCommission)
+                          : (currentCandidate.partnerCommission !== undefined && currentCandidate.partnerCommission !== null
+                            ? Number(currentCandidate.partnerCommission)
+                            : 0)
+                      ).toLocaleString('en-IN')}
+                    </span>
+                    {((currentCandidate.alHeraCommission !== undefined ? Number(currentCandidate.alHeraCommission) : Number(currentCandidate.partnerCommission || 0)) === 0) && (
+                      <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-1 py-0.2 rounded border border-amber-200">
+                        Zero
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-emerald-700 font-bold truncate block">
+                    Al-Hera Travels
+                  </span>
                 </div>
               </div>
             ) : (

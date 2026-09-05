@@ -52,7 +52,7 @@ interface CandidateDetailModalProps {
   candidate: Candidate | null;
   isOpen: boolean;
   onClose: () => void;
-  onUpdateCandidate: (updated: Candidate) => void;
+  onUpdateCandidate: (updated: Candidate) => Promise<boolean | void> | void;
   agencyInfo?: AgencyInfo;
 }
 
@@ -71,6 +71,8 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
   const [isEditCityModalOpen, setIsEditCityModalOpen] = useState(false);
   const [editingCityValue, setEditingCityValue] = useState(candidate?.selectionCity || '');
   const [isWakalaCardOpen, setIsWakalaCardOpen] = useState(false);
+  const [isSavingStatus, setIsSavingStatus] = useState(false);
+  const [statusUpdateError, setStatusUpdateError] = useState<string | null>(null);
 
   // Flight form state
   const [airline, setAirline] = useState(candidate?.flightDetails?.airline || 'Saudi Arabian Airlines');
@@ -222,63 +224,78 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
 
   if (!isOpen || !candidate) return null;
 
-  const handleAdvanceStatus = (e: React.FormEvent) => {
+  const handleAdvanceStatus = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSavingStatus(true);
+    setStatusUpdateError(null);
 
-    const finalSelectionCity = newStatus === 'interview_selected'
-      ? (selectionCity.trim() || candidate.selectionCity || '')
-      : (candidate.selectionCity || '');
+    try {
+      const finalSelectionCity = newStatus === 'interview_selected'
+        ? (selectionCity.trim() || candidate.selectionCity || '')
+        : (candidate.selectionCity || '');
 
-    const newHistoryItem = {
-      id: 'sth-' + Date.now(),
-      status: newStatus,
-      timestamp: new Date().toISOString(),
-      updatedBy: 'Al-Hera Operations Officer',
-      notes: statusNote || (newStatus === 'interview_selected' && finalSelectionCity
-        ? `Candidate interviewed & selected for ${candidate.trade || 'employment'} in ${finalSelectionCity}.`
-        : `Status transitioned to ${(newStatus || '').replace(/_/g, ' ')}`),
-      selectionCity: newStatus === 'interview_selected' ? (finalSelectionCity || undefined) : undefined,
-    };
-
-    let contractFields = {};
-    if ((newStatus === 'wakala_issued' || newStatus === 'visa_stamped') && !candidate.contractNumber) {
-      contractFields = {
-        contractNumber: `KSA-CNT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-        contractDate: new Date().toISOString().split('T')[0],
+      const newHistoryItem = {
+        id: 'sth-' + Date.now(),
+        status: newStatus,
+        timestamp: new Date().toISOString(),
+        updatedBy: 'Al-Hera Operations Officer',
+        notes: statusNote || (newStatus === 'interview_selected' && finalSelectionCity
+          ? `Candidate interviewed & selected for ${candidate.trade || 'employment'} in ${finalSelectionCity}.`
+          : `Status transitioned to ${(newStatus || '').replace(/_/g, ' ')}`),
+        selectionCity: newStatus === 'interview_selected' ? (finalSelectionCity || undefined) : undefined,
       };
-    }
 
-    const updated: Candidate = {
-      ...candidate,
-      ...contractFields,
-      status: newStatus,
-      selectionCity: finalSelectionCity || undefined,
-      statusHistory: [newHistoryItem, ...(candidate.statusHistory || [])],
-      updatedAt: new Date().toISOString(),
-    };
+      let contractFields = {};
+      if ((newStatus === 'wakala_issued' || newStatus === 'visa_stamped') && !candidate.contractNumber) {
+        contractFields = {
+          contractNumber: `KSA-CNT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+          contractDate: new Date().toISOString().split('T')[0],
+        };
+      }
 
-    onUpdateCandidate(updated);
-    setIsStatusUpdateOpen(false);
-    setStatusNote('');
+      const updated: Candidate = {
+        ...candidate,
+        ...contractFields,
+        status: newStatus,
+        selectionCity: finalSelectionCity || undefined,
+        statusHistory: [newHistoryItem, ...(candidate.statusHistory || [])],
+        updatedAt: new Date().toISOString(),
+      };
 
-    // Send WhatsApp notification
-    const msg = formatCandidateStatusMessage(updated, agency);
-    logSentMessage(
-      updated.fullName,
-      updated.whatsappNumber,
-      'whatsapp',
-      msg,
-      `Status Update (${newStatus})`,
-      updated.trackingId
-    );
+      const result = await onUpdateCandidate(updated);
+      if (result === false) {
+        setStatusUpdateError('Failed to save status to central Supabase database. Please retry.');
+        setIsSavingStatus(false);
+        return;
+      }
 
-    // If status is visa or wakala, generate the contract PDF
-    if (newStatus === 'wakala_issued' || newStatus === 'visa_stamped') {
-      setTimeout(() => {
-        if (confirm(`Saudi ${newStatus === 'visa_stamped' ? 'Visa' : 'Wakala'} has been issued! Would you like to generate and download the Overseas Employment Contract PDF now?`)) {
-          generateEmploymentContractPdf(updated, agency);
-        }
-      }, 300);
+      setIsStatusUpdateOpen(false);
+      setStatusNote('');
+
+      // Send WhatsApp notification
+      const msg = formatCandidateStatusMessage(updated, agency);
+      logSentMessage(
+        updated.fullName,
+        updated.whatsappNumber,
+        'whatsapp',
+        msg,
+        `Status Update (${newStatus})`,
+        updated.trackingId
+      );
+
+      // If status is visa or wakala, generate the contract PDF
+      if (newStatus === 'wakala_issued' || newStatus === 'visa_stamped') {
+        setTimeout(() => {
+          if (confirm(`Saudi ${newStatus === 'visa_stamped' ? 'Visa' : 'Wakala'} has been issued! Would you like to generate and download the Overseas Employment Contract PDF now?`)) {
+            generateEmploymentContractPdf(updated, agency);
+          }
+        }, 300);
+      }
+    } catch (err: any) {
+      console.error('Error updating candidate status:', err);
+      setStatusUpdateError(err?.message || 'Error updating candidate status in Supabase');
+    } finally {
+      setIsSavingStatus(false);
     }
   };
 
@@ -1063,12 +1080,28 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
                   ></textarea>
                 </div>
 
+                {statusUpdateError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
+                    {statusUpdateError}
+                  </div>
+                )}
+
                 <button
                   type="submit"
-                  className="w-full py-2.5 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl shadow flex items-center justify-center gap-2"
+                  disabled={isSavingStatus}
+                  className="w-full py-2.5 px-4 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold rounded-xl shadow flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
                 >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Update & Notify Candidate</span>
+                  {isSavingStatus ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                      <span>Saving to Supabase Database...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Update & Save to Supabase</span>
+                    </>
+                  )}
                 </button>
               </form>
             </div>
