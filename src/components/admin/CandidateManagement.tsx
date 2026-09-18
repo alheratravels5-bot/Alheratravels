@@ -84,6 +84,7 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
 
   // Single candidate status updating state
   const [updatingCandidateId, setUpdatingCandidateId] = useState<string | null>(null);
+  const [justUpdatedCandidateId, setJustUpdatedCandidateId] = useState<string | null>(null);
 
   const agency = propAgency || getAgencyInfo();
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
@@ -148,23 +149,44 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
     if (e) e.stopPropagation();
     if (c.status === newStatus) return;
 
+    // Prevent disappearing from view: If a status filter is currently active that would hide
+    // this candidate after changing status, automatically switch statusFilter to 'all'
+    // so the candidate remains completely visible in the table!
+    if (statusFilter !== 'all' && statusFilter !== newStatus) {
+      setStatusFilter('all');
+    }
+
     setUpdatingCandidateId(c.id);
+    setJustUpdatedCandidateId(c.id);
 
     try {
       if (onUpdateCandidateStatus) {
-        await onUpdateCandidateStatus(c.id, newStatus, {
+        const ok = await onUpdateCandidateStatus(c.id, newStatus, {
           selectionCity: newStatus === 'interview_selected' ? (c.selectionCity || 'Mumbai') : undefined,
         });
+        if (!ok && onUpdateCandidate) {
+          const updated: Candidate = {
+            ...c,
+            status: newStatus,
+            selectionCity: newStatus === 'interview_selected' ? (c.selectionCity || 'Mumbai') : c.selectionCity,
+            updatedAt: new Date().toISOString(),
+          };
+          await onUpdateCandidate(updated);
+        }
       } else if (onUpdateCandidate) {
         const updated: Candidate = {
           ...c,
           status: newStatus,
+          selectionCity: newStatus === 'interview_selected' ? (c.selectionCity || 'Mumbai') : c.selectionCity,
           updatedAt: new Date().toISOString(),
         };
         await onUpdateCandidate(updated);
       }
     } finally {
       setUpdatingCandidateId(null);
+      setTimeout(() => {
+        setJustUpdatedCandidateId(null);
+      }, 4500);
     }
   };
 
@@ -425,6 +447,35 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
         </div>
       )}
 
+      {/* Active Filter Indicator */}
+      {(statusFilter !== 'all' || tradeFilter !== 'all' || partnerFilter !== 'all' || cityFilter !== 'all' || searchQuery.trim()) && (
+        <div className="bg-amber-50 border border-amber-200 px-4 py-2.5 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900">
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-amber-700" />
+            <span>
+              Showing <strong>{filteredCandidates.length}</strong> of <strong>{safeCandidates.length}</strong> candidates
+              {statusFilter !== 'all' && (
+                <span className="ml-1.5 px-2 py-0.5 rounded-md bg-amber-200/70 font-semibold">
+                  Status: {statusFilter.replace(/_/g, ' ')}
+                </span>
+              )}
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              setStatusFilter('all');
+              setTradeFilter('all');
+              setPartnerFilter('all');
+              setCityFilter('all');
+              setSearchQuery('');
+            }}
+            className="text-amber-800 hover:text-amber-950 font-bold underline text-xs"
+          >
+            Show All Candidates ({safeCandidates.length})
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -459,6 +510,7 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
                 filteredCandidates.map((c) => {
                   const isSelected = selectedCandidateIds.has(c.id);
                   const isRowUpdating = updatingCandidateId === c.id;
+                  const isJustUpdated = justUpdatedCandidateId === c.id;
 
                   return (
                     <tr
@@ -466,7 +518,7 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
                       onClick={() => onViewCandidate(c)}
                       className={`hover:bg-amber-50/40 cursor-pointer transition-colors ${
                         isSelected ? 'bg-indigo-50/60' : ''
-                      }`}
+                      } ${isJustUpdated ? 'bg-emerald-50 ring-2 ring-emerald-500/80 transition-all duration-700' : ''}`}
                     >
                       <td
                         className="py-3.5 px-3 text-center"
@@ -516,20 +568,32 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
                               <span>Saving to Supabase...</span>
                             </div>
                           ) : (
-                            <div className="relative inline-block">
-                              <select
-                                value={c.status}
-                                onChange={(e) => handleQuickStatusChange(c, e.target.value as CandidateStatus, e)}
-                                className="appearance-none pr-7 pl-2.5 py-1 text-[11px] font-bold rounded-lg border border-slate-300 bg-white hover:border-amber-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none cursor-pointer transition-colors text-slate-800 shadow-2xs"
-                                title="Change status stage immediately in Supabase"
-                              >
-                                {STATUS_OPTIONS.map((opt) => (
-                                  <option key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                  </option>
-                                ))}
-                              </select>
-                              <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <div className="flex items-center gap-1.5">
+                              <div className="relative inline-block">
+                                <select
+                                  value={c.status}
+                                  onChange={(e) => handleQuickStatusChange(c, e.target.value as CandidateStatus, e)}
+                                  className={`appearance-none pr-7 pl-2.5 py-1 text-[11px] font-bold rounded-lg border bg-white focus:outline-none cursor-pointer transition-colors text-slate-800 shadow-2xs ${
+                                    isJustUpdated
+                                      ? 'border-emerald-500 ring-2 ring-emerald-400 bg-emerald-50/50 text-emerald-950'
+                                      : 'border-slate-300 hover:border-amber-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500'
+                                  }`}
+                                  title="Change status stage immediately in Supabase"
+                                >
+                                  {STATUS_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                      {opt.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                              </div>
+                              {isJustUpdated && (
+                                <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-bold bg-emerald-100 px-2 py-0.5 rounded-md whitespace-nowrap">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                  Saved!
+                                </span>
+                              )}
                             </div>
                           )}
                         </div>

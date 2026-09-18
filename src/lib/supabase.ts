@@ -863,13 +863,67 @@ export async function updateCandidateStatusDirectInSupabase(
       findQuery = findQuery.or(`id.eq.${candidateId},tracking_id.eq.${candidateId}`);
     }
 
-    const { data: foundRows, error: findErr } = await findQuery;
-    if (findErr) {
-      console.error('Error finding candidate in Supabase:', findErr);
-      throw new Error(findErr.message || 'Candidate lookup error in Supabase');
+    let foundRows = (await findQuery).data;
+    if (!foundRows || foundRows.length === 0) {
+      // Check in al_hera_sync_store in case candidate was saved in document store
+      const { data: storeRow } = await supabase.from('al_hera_sync_store').select('data').eq('key', 'candidates').maybeSingle();
+      const storeCands: Candidate[] = Array.isArray(storeRow?.data) ? storeRow.data : [];
+      const match = storeCands.find((c) => c.id === candidateId || (c.trackingId && c.trackingId === candidateId));
+      if (match) {
+        const formatted = formatCandidateRow(match, now);
+        await supabase.from('candidates').upsert(formatted, { onConflict: 'tracking_id' });
+        const { data: refetched } = await supabase.from('candidates').select('*').eq('tracking_id', match.trackingId);
+        if (refetched && refetched.length > 0) {
+          foundRows = refetched;
+        }
+      }
     }
 
     if (!foundRows || foundRows.length === 0) {
+      // If still not found in relational table, update status in al_hera_sync_store directly to prevent data loss
+      const { data: storeRow } = await supabase.from('al_hera_sync_store').select('data').eq('key', 'candidates').maybeSingle();
+      const storeCands: Candidate[] = Array.isArray(storeRow?.data) ? storeRow.data : [];
+      let updatedStoreCand: Candidate | undefined;
+      const updatedStoreList = storeCands.map((c) => {
+        if (c.id === candidateId || (c.trackingId && c.trackingId === candidateId)) {
+          const newEvent: StatusTimelineEvent = {
+            id: 'sth-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+            status: newStatus,
+            timestamp: now,
+            updatedBy: options?.updatedBy || 'Operations Admin',
+            notes: options?.notes || (newStatus === 'interview_selected' && options?.selectionCity
+              ? `Candidate interviewed & selected in ${options.selectionCity}.`
+              : `Status transitioned to ${newStatus.replace(/_/g, ' ')}`),
+            selectionCity: newStatus === 'interview_selected' ? (options?.selectionCity || c.selectionCity) : undefined,
+          };
+          updatedStoreCand = {
+            ...c,
+            status: newStatus,
+            selectionCity: newStatus === 'interview_selected' ? (options?.selectionCity || c.selectionCity) : c.selectionCity,
+            statusHistory: [newEvent, ...(c.statusHistory || [])],
+            updatedAt: now,
+          };
+          return updatedStoreCand;
+        }
+        return c;
+      });
+
+      if (updatedStoreCand) {
+        await supabase.from('al_hera_sync_store').upsert(
+          { key: 'candidates', data: updatedStoreList, updated_at: now },
+          { onConflict: 'key' }
+        );
+        try {
+          await saveCandidateToFirestore(updatedStoreCand);
+        } catch {}
+        return {
+          success: true,
+          message: `Candidate ${updatedStoreCand.fullName} status updated to ${newStatus.replace(/_/g, ' ')}!`,
+          candidate: updatedStoreCand,
+          candidates: updatedStoreList,
+        };
+      }
+
       throw new Error(`Candidate with ID ${candidateId} could not be found in Supabase database.`);
     }
 
@@ -917,9 +971,19 @@ export async function updateCandidateStatusDirectInSupabase(
       throw new Error('Supabase UPDATE statement did not match any row to update.');
     }
 
-    // 4. Fetch fresh candidates list directly from Supabase
-    const freshResult = await fetchCandidatesDirectFromSupabase();
-    const freshCandidates = freshResult.candidates;
+    // 4. Fetch fresh candidates list merging relational table and JSON document store
+    const [freshTableResult, storeRes] = await Promise.allSettled([
+      fetchCandidatesDirectFromSupabase(),
+      supabase.from('al_hera_sync_store').select('data').eq('key', 'candidates').maybeSingle(),
+    ]);
+
+    const tableCandidates = freshTableResult.status === 'fulfilled' ? freshTableResult.value.candidates : [];
+    const storeCandidates: Candidate[] = (storeRes.status === 'fulfilled' && storeRes.value.data?.data && Array.isArray(storeRes.value.data.data))
+      ? storeRes.value.data.data
+      : [];
+
+    // Merge candidates safely so rich metadata like documents, payment history, etc. are never lost
+    let freshCandidates = mergeCandidates(storeCandidates, tableCandidates);
 
     // 5. Update central document store al_hera_sync_store to ensure complete parity
     if (freshCandidates.length > 0) {
@@ -929,7 +993,20 @@ export async function updateCandidateStatusDirectInSupabase(
       );
     }
 
-    const updatedCand = freshCandidates.find((c) => c.id === targetUuid || c.trackingId === dbRow.tracking_id);
+    let updatedCand = freshCandidates.find((c) => c.id === targetUuid || c.trackingId === dbRow.tracking_id);
+
+    // Ensure documents and payment records from existing store are retained if not in table
+    if (updatedCand) {
+      const existingInStore = storeCandidates.find((sc) => sc.id === targetUuid || sc.trackingId === dbRow.tracking_id);
+      if (existingInStore) {
+        updatedCand = {
+          ...existingInStore,
+          ...updatedCand,
+          documents: (updatedCand.documents && updatedCand.documents.length > 0) ? updatedCand.documents : (existingInStore.documents || []),
+          paymentHistory: (updatedCand.paymentHistory && updatedCand.paymentHistory.length > 0) ? updatedCand.paymentHistory : (existingInStore.paymentHistory || []),
+        };
+      }
+    }
 
     // 6. Firestore sync for candidate record per project standards
     if (updatedCand) {
@@ -1060,9 +1137,18 @@ export async function updateMultipleCandidatesStatusInSupabase(
       throw new Error(`Failed to update candidates in Supabase: ${errors.join(', ')}`);
     }
 
-    // Fetch freshly refreshed candidates from Supabase
-    const freshResult = await fetchCandidatesDirectFromSupabase();
-    const freshCandidates = freshResult.candidates;
+    // Fetch freshly refreshed candidates from Supabase merging relational table and JSON document store
+    const [freshTableResult, storeRes] = await Promise.allSettled([
+      fetchCandidatesDirectFromSupabase(),
+      supabase.from('al_hera_sync_store').select('data').eq('key', 'candidates').maybeSingle(),
+    ]);
+
+    const tableCandidates = freshTableResult.status === 'fulfilled' ? freshTableResult.value.candidates : [];
+    const storeCandidates: Candidate[] = (storeRes.status === 'fulfilled' && storeRes.value.data?.data && Array.isArray(storeRes.value.data.data))
+      ? storeRes.value.data.data
+      : [];
+
+    const freshCandidates = mergeCandidates(storeCandidates, tableCandidates);
 
     // Update central document store al_hera_sync_store
     if (freshCandidates.length > 0) {
@@ -1170,18 +1256,38 @@ export async function updateCandidateDirectInSupabase(
       }
     }
 
-    // Fetch freshly refreshed candidates from Supabase
-    const freshResult = await fetchCandidatesDirectFromSupabase();
-    let freshCandidates = freshResult.candidates;
+    // Fetch freshly refreshed candidates from Supabase merging relational table and JSON document store
+    const [freshTableResult, storeRes] = await Promise.allSettled([
+      fetchCandidatesDirectFromSupabase(),
+      supabase.from('al_hera_sync_store').select('data').eq('key', 'candidates').maybeSingle(),
+    ]);
 
-    // Merge updatedCandidate to ensure documents and custom metadata are not lost
+    const tableCandidates = freshTableResult.status === 'fulfilled' ? freshTableResult.value.candidates : [];
+    const storeCandidates: Candidate[] = (storeRes.status === 'fulfilled' && storeRes.value.data?.data && Array.isArray(storeRes.value.data.data))
+      ? storeRes.value.data.data
+      : [];
+
+    let freshCandidates = mergeCandidates(storeCandidates, tableCandidates);
+
+    // Merge updatedCandidate to ensure documents, payment history and custom metadata are strictly preserved
     freshCandidates = freshCandidates.map((c) => {
       if (c.trackingId === updatedCandidate.trackingId || c.id === updatedCandidate.id) {
         return {
           ...c,
           ...updatedCandidate,
-          documents: updatedCandidate.documents || c.documents || [],
+          documents: (updatedCandidate.documents && updatedCandidate.documents.length > 0)
+            ? updatedCandidate.documents
+            : (c.documents || []),
+          paymentHistory: (updatedCandidate.paymentHistory && updatedCandidate.paymentHistory.length > 0)
+            ? updatedCandidate.paymentHistory
+            : (c.paymentHistory || []),
+          statusHistory: (updatedCandidate.statusHistory && updatedCandidate.statusHistory.length > 0)
+            ? updatedCandidate.statusHistory
+            : (c.statusHistory || []),
           selectionCity: updatedCandidate.selectionCity || c.selectionCity,
+          contractUrl: updatedCandidate.contractUrl || c.contractUrl,
+          contractNumber: updatedCandidate.contractNumber || c.contractNumber,
+          contractGeneratedAt: updatedCandidate.contractGeneratedAt || c.contractGeneratedAt,
           updatedAt: now,
         };
       }
@@ -1302,11 +1408,20 @@ export async function fetchCandidatesDirectFromSupabase(): Promise<{
       totalPaid: Number(r.total_paid) || 0,
       balanceDue: Number(r.balance_due) || 0,
       paymentHistory: Array.isArray(r.payment_history) ? r.payment_history : [],
+      documents: Array.isArray(r.documents) ? r.documents : [],
       photoUrl: r.photo_url || '',
       passportScanUrl: r.passport_scan_url || '',
       medicalReportUrl: r.medical_report_url || '',
       tradeCertificateUrl: r.trade_certificate_url || '',
       cvUrl: r.cv_url || '',
+      contractUrl: r.contract_url || undefined,
+      contractNumber: r.contract_number || undefined,
+      contractGeneratedAt: r.contract_generated_at || undefined,
+      visaId: r.visa_id || undefined,
+      visaBatchId: r.visa_batch_id || undefined,
+      visaAmount: Number(r.visa_amount) || undefined,
+      partnerPayableAmount: Number(r.partner_payable_amount) || undefined,
+      partnerOfficePaidAmount: Number(r.partner_office_paid_amount) || undefined,
       remarks: r.remarks || '',
       selectionCity: (() => {
         if (Array.isArray(r.status_history)) {
