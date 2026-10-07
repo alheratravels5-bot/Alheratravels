@@ -546,6 +546,24 @@ export async function deletePartnerPaymentFromFirestore(paymentId: string): Prom
   }
 }
 
+export async function deleteVisaBatchFromFirestore(batchId: string): Promise<void> {
+  try {
+    const db = getFirebaseDb();
+    await deleteDoc(doc(db, 'visa_batches', batchId));
+  } catch (err) {
+    console.warn('Firestore visa batch delete error:', err);
+  }
+}
+
+export async function deleteIndividualVisaFromFirestore(visaId: string): Promise<void> {
+  try {
+    const db = getFirebaseDb();
+    await deleteDoc(doc(db, 'visas', visaId));
+  } catch (err) {
+    console.warn('Firestore individual visa delete error:', err);
+  }
+}
+
 /**
  * Specifically fetch all historical candidate payments and partner payments from Firestore
  */

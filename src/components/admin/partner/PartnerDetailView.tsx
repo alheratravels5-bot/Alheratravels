@@ -45,11 +45,13 @@ import {
   PartnerAuditLog,
   AgencyInfo
 } from '../../../types';
-import { getAgencyInfo, deletePartnerPaymentRecord } from '../../../lib/storage';
+import { getAgencyInfo, deletePartnerPaymentRecord, deleteVisaBatch } from '../../../lib/storage';
 import { computePartnerFinancials, computeRunningLedger } from '../../../lib/partnerCalculations';
 import { generatePartnerStatementPdf } from '../../../lib/pdfGenerator';
 import { PartnerLedgerModal } from './PartnerLedgerModal';
 import { FetchUpdatePaymentModal } from '../FetchUpdatePaymentModal';
+import { ViewVisaBatchModal } from './ViewVisaBatchModal';
+import { DeleteVisaBatchModal } from './DeleteVisaBatchModal';
 
 interface PartnerDetailViewProps {
   partner: PartnerOffice;
@@ -61,6 +63,7 @@ interface PartnerDetailViewProps {
   allAuditLogs: PartnerAuditLog[];
   onBack: () => void;
   onOpenReceiveBatch: () => void;
+  onOpenEditBatch?: (batch: VisaBatch) => void;
   onOpenAssignCandidate: (visa?: IndividualVisa) => void;
   onOpenRecordPayment: (candidateId?: string) => void;
   onOpenFullLedger: () => void;
@@ -78,6 +81,7 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
   allAuditLogs,
   onBack,
   onOpenReceiveBatch,
+  onOpenEditBatch,
   onOpenAssignCandidate,
   onOpenRecordPayment,
   onOpenFullLedger,
@@ -88,6 +92,14 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
     'overview' | 'batches' | 'visas' | 'candidates' | 'payments' | 'ledger' | 'audit'
   >('overview');
   const [isLedgerModalOpen, setIsLedgerModalOpen] = useState<boolean>(false);
+
+  // State for Batch View Modal
+  const [selectedBatchForView, setSelectedBatchForView] = useState<VisaBatch | null>(null);
+
+  // State for Batch Delete confirmation
+  const [batchDeleteTarget, setBatchDeleteTarget] = useState<VisaBatch | null>(null);
+  const [isDeletingBatch, setIsDeletingBatch] = useState(false);
+  const [batchDeleteError, setBatchDeleteError] = useState<string | null>(null);
 
   // State for Fetch & Update Payment Modal
   const [isFetchUpdateModalOpen, setIsFetchUpdateModalOpen] = useState(false);
@@ -107,6 +119,32 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
       paymentNumber,
       amount,
     });
+  };
+
+  const handleRequestDeleteBatch = (batch: VisaBatch) => {
+    setBatchDeleteError(null);
+    setBatchDeleteTarget(batch);
+  };
+
+  const executeDeleteBatch = async () => {
+    if (!batchDeleteTarget) return;
+    setIsDeletingBatch(true);
+    setBatchDeleteError(null);
+    try {
+      const res = deleteVisaBatch(batchDeleteTarget.id, 'Administrator');
+      if (res.success) {
+        setBatchDeleteTarget(null);
+        if (onRefreshData) {
+          onRefreshData();
+        }
+      } else {
+        setBatchDeleteError(res.message);
+      }
+    } catch (err: any) {
+      setBatchDeleteError(err?.message || 'Error deleting visa batch');
+    } finally {
+      setIsDeletingBatch(false);
+    }
   };
 
   const executeDeletePartnerPayment = async () => {
@@ -785,6 +823,7 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
                   <th className="py-3 px-3 text-right">Price / Visa</th>
                   <th className="py-3 px-3 text-right">Total Batch Value</th>
                   <th className="py-3 px-4 text-center">Status</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -818,11 +857,50 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
                         {b.status}
                       </span>
                     </td>
+                    <td className="py-3 px-4 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedBatchForView(b)}
+                          className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] flex items-center gap-1 transition-all"
+                          title="View batch details and individual visa records"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>View</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onOpenEditBatch?.(b)}
+                          className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] flex items-center gap-1 transition-all"
+                          title="Edit batch details (rate, city, remarks)"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRequestDeleteBatch(b)}
+                          className={`px-2.5 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1 transition-all ${
+                            b.usedVisas > 0
+                              ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                              : 'bg-rose-50 hover:bg-rose-100 text-rose-700'
+                          }`}
+                          title={
+                            b.usedVisas > 0
+                              ? `Cannot delete: ${b.usedVisas} visa(s) assigned to candidate`
+                              : 'Delete this visa batch'
+                          }
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete</span>
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
                 {partnerBatches.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="py-8 text-center text-slate-400">
+                    <td colSpan={9} className="py-8 text-center text-slate-400">
                       No visa batches received from this partner yet. Click "Receive New Batch" to add.
                     </td>
                   </tr>
@@ -1863,6 +1941,40 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* View Visa Batch Modal */}
+      <ViewVisaBatchModal
+        isOpen={!!selectedBatchForView}
+        onClose={() => setSelectedBatchForView(null)}
+        batch={selectedBatchForView}
+        allVisas={allVisas}
+        allCandidates={allCandidates}
+        onEdit={(batch) => {
+          setSelectedBatchForView(null);
+          onOpenEditBatch?.(batch);
+        }}
+        onDelete={(batch) => {
+          setSelectedBatchForView(null);
+          setBatchDeleteTarget(batch);
+        }}
+        onAssignVisa={(visa) => {
+          setSelectedBatchForView(null);
+          onOpenAssignCandidate(visa);
+        }}
+        onSelectCandidateDetail={onSelectCandidateDetail}
+      />
+
+      {/* Delete Visa Batch Modal */}
+      <DeleteVisaBatchModal
+        isOpen={!!batchDeleteTarget}
+        onClose={() => setBatchDeleteTarget(null)}
+        batch={batchDeleteTarget}
+        allVisas={allVisas}
+        onDeleted={() => {
+          setBatchDeleteTarget(null);
+          onRefreshData?.();
+        }}
+      />
 
       {/* Fetch & Update Payment Modal */}
       <FetchUpdatePaymentModal

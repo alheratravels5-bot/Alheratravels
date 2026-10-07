@@ -58,6 +58,8 @@ import { AssignCandidateToVisaModal } from './partner/AssignCandidateToVisaModal
 import { RecordPartnerPaymentModal } from './partner/RecordPartnerPaymentModal';
 import { PartnerLedgerModal } from './partner/PartnerLedgerModal';
 import { FetchUpdatePaymentModal } from './FetchUpdatePaymentModal';
+import { ViewVisaBatchModal } from './partner/ViewVisaBatchModal';
+import { DeleteVisaBatchModal } from './partner/DeleteVisaBatchModal';
 
 interface PartnerManagementProps {
   partners: PartnerOffice[];
@@ -88,12 +90,21 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
   const [isPartnerFormOpen, setIsPartnerFormOpen] = useState(false);
   const [editingPartner, setEditingPartner] = useState<PartnerOffice | null>(null);
   const [isReceiveBatchOpen, setIsReceiveBatchOpen] = useState(false);
+  const [editingVisaBatch, setEditingVisaBatch] = useState<VisaBatch | null>(null);
   const [isAssignCandidateOpen, setIsAssignCandidateOpen] = useState(false);
   const [selectedVisaForAssignment, setSelectedVisaForAssignment] = useState<IndividualVisa | null>(null);
   const [isRecordPaymentOpen, setIsRecordPaymentOpen] = useState(false);
   const [selectedCandidateIdForPayment, setSelectedCandidateIdForPayment] = useState<string>('');
   const [isLedgerModalOpen, setIsLedgerModalOpen] = useState(false);
   const [isFetchUpdateModalOpen, setIsFetchUpdateModalOpen] = useState(false);
+
+  // Active section tab: Partner Offices vs Receive Visa Batch
+  const [activeSection, setActiveSection] = useState<'partners' | 'batches'>('partners');
+  const [selectedBatchForView, setSelectedBatchForView] = useState<VisaBatch | null>(null);
+  const [batchDeleteTarget, setBatchDeleteTarget] = useState<VisaBatch | null>(null);
+  const [batchSearchQuery, setBatchSearchQuery] = useState('');
+  const [batchStatusFilter, setBatchStatusFilter] = useState<'all' | 'Available' | 'Partially Used' | 'Fully Used'>('all');
+  const [batchPartnerFilter, setBatchPartnerFilter] = useState<string>('all');
 
   // Filter & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -169,6 +180,23 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
       );
     });
   }, [partners, searchQuery]);
+
+  // Filtered Visa Batches for Receive Visa Batch Section
+  const filteredVisaBatches = useMemo(() => {
+    return visaBatches.filter((b) => {
+      if (batchStatusFilter !== 'all' && b.status !== batchStatusFilter) return false;
+      if (batchPartnerFilter !== 'all' && b.partnerOfficeId !== batchPartnerFilter) return false;
+      if (!batchSearchQuery.trim()) return true;
+      const q = batchSearchQuery.toLowerCase().trim();
+      return (
+        b.batchId.toLowerCase().includes(q) ||
+        b.jobTitle.toLowerCase().includes(q) ||
+        b.partnerOfficeName.toLowerCase().includes(q) ||
+        b.sectorCity.toLowerCase().includes(q) ||
+        (b.visaType && b.visaType.toLowerCase().includes(q))
+      );
+    });
+  }, [visaBatches, batchSearchQuery, batchStatusFilter, batchPartnerFilter]);
 
   // Selected Partner Object
   const selectedPartner = partners.find((p) => p.id === selectedPartnerId) || null;
@@ -256,7 +284,14 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
         allLedger={partnerLedger}
         allAuditLogs={partnerAuditLogs}
         onBack={() => setSelectedPartnerId(null)}
-        onOpenReceiveBatch={() => setIsReceiveBatchOpen(true)}
+        onOpenReceiveBatch={() => {
+          setEditingVisaBatch(null);
+          setIsReceiveBatchOpen(true);
+        }}
+        onOpenEditBatch={(batch) => {
+          setEditingVisaBatch(batch);
+          setIsReceiveBatchOpen(true);
+        }}
         onOpenAssignCandidate={(visa) => {
           setSelectedVisaForAssignment(visa || null);
           setIsAssignCandidateOpen(true);
@@ -343,7 +378,15 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
       {/* Network Overview Financial Metric Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {/* Total Partners */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-1">
+        <div
+          onClick={() => setActiveSection('partners')}
+          className={`bg-white rounded-2xl border p-4 shadow-sm space-y-1 cursor-pointer transition-all ${
+            activeSection === 'partners'
+              ? 'border-amber-500 ring-2 ring-amber-500/20'
+              : 'border-slate-200 hover:border-slate-300'
+          }`}
+          title="Click to view Partner Offices"
+        >
           <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
             Partner Offices
           </span>
@@ -354,7 +397,15 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
         </div>
 
         {/* Visas Received */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-1">
+        <div
+          onClick={() => setActiveSection('batches')}
+          className={`bg-white rounded-2xl border p-4 shadow-sm space-y-1 cursor-pointer transition-all ${
+            activeSection === 'batches'
+              ? 'border-amber-500 ring-2 ring-amber-500/20'
+              : 'border-slate-200 hover:border-slate-300'
+          }`}
+          title="Click to open Receive Visa Batch inventory"
+        >
           <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
             Visas Received
           </span>
@@ -376,7 +427,11 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
         </div>
 
         {/* Available Visas */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-1">
+        <div
+          onClick={() => setActiveSection('batches')}
+          className="bg-white rounded-2xl border border-slate-200 hover:border-emerald-300 p-4 shadow-sm space-y-1 cursor-pointer transition-all"
+          title="Click to view available visa batches"
+        >
           <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
             Available Visas
           </span>
@@ -409,8 +464,46 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
         </div>
       </div>
 
-      {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+      {/* Section Navigation Tabs: Partner Offices vs Receive Visa Batch */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+        <button
+          type="button"
+          onClick={() => setActiveSection('partners')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+            activeSection === 'partners'
+              ? 'bg-[#0F1E36] text-amber-400 shadow-sm'
+              : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+          }`}
+        >
+          <Building2 className="w-4 h-4" />
+          <span>Partner Offices</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-200 font-mono font-bold">
+            {partners.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSection('batches')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+            activeSection === 'batches'
+              ? 'bg-[#0F1E36] text-amber-400 shadow-sm'
+              : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+          }`}
+        >
+          <Ticket className="w-4 h-4" />
+          <span>Receive Visa Batch</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-mono font-black">
+            {visaBatches.length} Batches
+          </span>
+        </button>
+      </div>
+
+      {/* SECTION 1: PARTNER OFFICES */}
+      {activeSection === 'partners' && (
+        <>
+          {/* Filter & Search Bar */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
         <div className="relative flex-1">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
           <input
@@ -632,6 +725,222 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
           </table>
         </div>
       )}
+    </>
+  )}
+
+  {/* ========================================================================= */}
+  {/* SECTION 2: RECEIVE VISA BATCH & BATCHES INVENTORY */}
+  {/* ========================================================================= */}
+  {activeSection === 'batches' && (
+    <div className="space-y-4 animate-fade-in">
+      {/* Section Sub-header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+        <div>
+          <div className="flex items-center gap-2">
+            <Ticket className="w-5 h-5 text-amber-600" />
+            <h3 className="font-bold text-base text-[#0F1E36]">
+              Receive Visa Batch & Inventory Management
+            </h3>
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold font-mono">
+              {visaBatches.length} Batches
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Manage all Saudi visa batches received from partner offices. View allocation details, edit trade/rate metadata safely, or delete unassigned batches.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setEditingVisaBatch(null);
+              setIsReceiveBatchOpen(true);
+            }}
+            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-sm transition-all cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Receive New Batch</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Filter & Search Bar for Batches */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+          <input
+            type="text"
+            placeholder="Search batches by ID, trade, city / sector, or partner office..."
+            value={batchSearchQuery}
+            onChange={(e) => setBatchSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none bg-slate-50/50"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={batchPartnerFilter}
+            onChange={(e) => setBatchPartnerFilter(e.target.value)}
+            className="py-2 px-3 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none bg-white font-medium"
+          >
+            <option value="all">All Partner Offices ({partners.length})</option>
+            {partners.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.agencyName} ({p.partnerCode || 'PTR'})
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={batchStatusFilter}
+            onChange={(e) => setBatchStatusFilter(e.target.value as any)}
+            className="py-2 px-3 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none bg-white font-medium"
+          >
+            <option value="all">All Statuses</option>
+            <option value="Available">Available (Unassigned)</option>
+            <option value="Partially Used">Partially Used</option>
+            <option value="Fully Used">Fully Used</option>
+          </select>
+
+          {(batchSearchQuery || batchPartnerFilter !== 'all' || batchStatusFilter !== 'all') && (
+            <button
+              type="button"
+              onClick={() => {
+                setBatchSearchQuery('');
+                setBatchPartnerFilter('all');
+                setBatchStatusFilter('all');
+              }}
+              className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
+            >
+              Clear Filters
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Batches Table */}
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead className="bg-slate-900 text-white text-[10px] font-bold uppercase tracking-wider">
+              <tr>
+                <th className="py-3 px-4">Batch ID & Trade</th>
+                <th className="py-3 px-3">Partner Office</th>
+                <th className="py-3 px-3">City / Sector</th>
+                <th className="py-3 px-3 text-center">Total Visas</th>
+                <th className="py-3 px-3 text-center">Assigned / Used</th>
+                <th className="py-3 px-3 text-center">Available</th>
+                <th className="py-3 px-3 text-right">Price / Visa</th>
+                <th className="py-3 px-3 text-right">Total Batch Value</th>
+                <th className="py-3 px-4 text-center">Status</th>
+                <th className="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {filteredVisaBatches.map((b) => (
+                <tr key={b.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="py-3 px-4">
+                    <span className="font-mono font-bold text-slate-900 block">{b.batchId}</span>
+                    <strong className="text-slate-800 text-xs">{b.jobTitle}</strong>
+                    <span className="text-[10px] text-slate-400 block">Recv: {b.dateReceived || 'N/A'}</span>
+                  </td>
+                  <td className="py-3 px-3">
+                    <span className="font-bold text-slate-900 block">{b.partnerOfficeName}</span>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      {partners.find((p) => p.id === b.partnerOfficeId)?.partnerCode || 'PTR'}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3 font-medium text-slate-700">{b.sectorCity}</td>
+                  <td className="py-3 px-3 text-center font-bold text-slate-900">{b.totalVisas}</td>
+                  <td className="py-3 px-3 text-center font-bold text-blue-700">{b.usedVisas}</td>
+                  <td className="py-3 px-3 text-center font-bold text-emerald-700">{b.remainingVisas}</td>
+                  <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
+                    ₹{b.amountPerVisa.toLocaleString('en-IN')}
+                  </td>
+                  <td className="py-3 px-3 text-right font-mono font-extrabold text-[#0F1E36]">
+                    ₹{b.totalAmount.toLocaleString('en-IN')}
+                  </td>
+                  <td className="py-3 px-4 text-center">
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        b.remainingVisas === 0
+                          ? 'bg-rose-100 text-rose-800'
+                          : b.usedVisas > 0
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-emerald-100 text-emerald-800'
+                      }`}
+                    >
+                      {b.status}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      {/* 1. View Option */}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBatchForView(b)}
+                        className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer"
+                        title="View complete batch details and individual visa records"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>View</span>
+                      </button>
+
+                      {/* 2. Edit Option */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingVisaBatch(b);
+                          setIsReceiveBatchOpen(true);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer"
+                        title="Edit batch rates, city or trade safely in-place without duplicating"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>Edit</span>
+                      </button>
+
+                      {/* 3. Delete Option */}
+                      <button
+                        type="button"
+                        onClick={() => setBatchDeleteTarget(b)}
+                        className={`px-2.5 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer ${
+                          b.usedVisas > 0
+                            ? 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                            : 'bg-rose-50 hover:bg-rose-100 text-rose-700'
+                        }`}
+                        title={
+                          b.usedVisas > 0
+                            ? `Cannot delete: ${b.usedVisas} visa(s) linked to candidate`
+                            : 'Safely delete this visa batch'
+                        }
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete</span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {filteredVisaBatches.length === 0 && (
+                <tr>
+                  <td colSpan={10} className="py-12 text-center text-slate-400">
+                    <Ticket className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+                    <p className="font-bold text-slate-700">No visa batches found.</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {batchSearchQuery || batchPartnerFilter !== 'all' || batchStatusFilter !== 'all'
+                        ? 'Try clearing the search query or filters above.'
+                        : 'Click "Receive New Batch" to add a Saudi visa inventory batch.'}
+                    </p>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )}
 
       {/* ========================================================================= */}
       {/* MODALS */}
@@ -640,11 +949,16 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
       {/* 1. Receive Visa Batch Modal */}
       <ReceiveVisaBatchModal
         isOpen={isReceiveBatchOpen}
-        onClose={() => setIsReceiveBatchOpen(false)}
+        onClose={() => {
+          setIsReceiveBatchOpen(false);
+          setEditingVisaBatch(null);
+        }}
         partner={null}
         allPartners={partners}
+        initialBatch={editingVisaBatch}
         onBatchAdded={() => {
           loadData();
+          setEditingVisaBatch(null);
         }}
       />
 
@@ -843,6 +1157,42 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
           </div>
         </div>
       )}
+
+      {/* 5. View Visa Batch Modal */}
+      <ViewVisaBatchModal
+        isOpen={!!selectedBatchForView}
+        onClose={() => setSelectedBatchForView(null)}
+        batch={selectedBatchForView}
+        allVisas={individualVisas}
+        allCandidates={candidates}
+        onEdit={(batch) => {
+          setSelectedBatchForView(null);
+          setEditingVisaBatch(batch);
+          setIsReceiveBatchOpen(true);
+        }}
+        onDelete={(batch) => {
+          setSelectedBatchForView(null);
+          setBatchDeleteTarget(batch);
+        }}
+        onAssignVisa={(visa) => {
+          setSelectedBatchForView(null);
+          setSelectedVisaForAssignment(visa);
+          setIsAssignCandidateOpen(true);
+        }}
+        onSelectCandidateDetail={onSelectCandidateDetail}
+      />
+
+      {/* 6. Delete Visa Batch Modal */}
+      <DeleteVisaBatchModal
+        isOpen={!!batchDeleteTarget}
+        onClose={() => setBatchDeleteTarget(null)}
+        batch={batchDeleteTarget}
+        allVisas={individualVisas}
+        onDeleted={() => {
+          setBatchDeleteTarget(null);
+          loadData();
+        }}
+      />
 
       {/* Fetch & Update Payment Modal */}
       <FetchUpdatePaymentModal

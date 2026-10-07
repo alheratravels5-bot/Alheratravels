@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Plus,
@@ -12,10 +12,11 @@ import {
   Briefcase,
   AlertCircle,
   CheckCircle2,
-  Sparkles
+  Sparkles,
+  Edit3
 } from 'lucide-react';
 import { PartnerOffice, VisaBatch } from '../../../types';
-import { addVisaBatchWithIndividualVisas } from '../../../lib/storage';
+import { addVisaBatchWithIndividualVisas, updateVisaBatch } from '../../../lib/storage';
 
 interface ReceiveVisaBatchModalProps {
   isOpen: boolean;
@@ -23,6 +24,7 @@ interface ReceiveVisaBatchModalProps {
   partner?: PartnerOffice | null;
   allPartners: PartnerOffice[];
   onBatchAdded: (batch: VisaBatch) => void;
+  initialBatch?: VisaBatch | null;
 }
 
 const COMMON_SAUDI_TRADES = [
@@ -63,23 +65,78 @@ export const ReceiveVisaBatchModal: React.FC<ReceiveVisaBatchModalProps> = ({
   partner,
   allPartners,
   onBatchAdded,
+  initialBatch,
 }) => {
-  const [selectedPartnerId, setSelectedPartnerId] = useState<string>(partner?.id || allPartners[0]?.id || '');
-  const [jobTitle, setJobTitle] = useState<string>('Electrician (Building / Industrial)');
-  const [customJobTitle, setCustomJobTitle] = useState<string>('');
-  const [sectorCity, setSectorCity] = useState<string>('Riyadh Mega Projects');
-  const [customSectorCity, setCustomSectorCity] = useState<string>('');
-  const [isCustomSectorMode, setIsCustomSectorMode] = useState<boolean>(false);
-  const [visaType, setVisaType] = useState<string>('Employment Work Visa (1-2 Years)');
-  const [totalVisas, setTotalVisas] = useState<number>(10);
-  const [amountPerVisa, setAmountPerVisa] = useState<number>(35000);
-  const [dateReceived, setDateReceived] = useState<string>(new Date().toISOString().split('T')[0]);
+  const isEditMode = !!initialBatch;
+
+  const [selectedPartnerId, setSelectedPartnerId] = useState<string>(
+    initialBatch?.partnerOfficeId || partner?.id || allPartners[0]?.id || ''
+  );
+  const [jobTitle, setJobTitle] = useState<string>(
+    initialBatch ? (COMMON_SAUDI_TRADES.includes(initialBatch.jobTitle) ? initialBatch.jobTitle : 'Other') : 'Electrician (Building / Industrial)'
+  );
+  const [customJobTitle, setCustomJobTitle] = useState<string>(
+    initialBatch && !COMMON_SAUDI_TRADES.includes(initialBatch.jobTitle) ? initialBatch.jobTitle : ''
+  );
+  const [sectorCity, setSectorCity] = useState<string>(
+    initialBatch ? (SAUDI_CITIES.includes(initialBatch.sectorCity) ? initialBatch.sectorCity : 'Other') : 'Riyadh Mega Projects'
+  );
+  const [customSectorCity, setCustomSectorCity] = useState<string>(
+    initialBatch && !SAUDI_CITIES.includes(initialBatch.sectorCity) ? initialBatch.sectorCity : ''
+  );
+  const [isCustomSectorMode, setIsCustomSectorMode] = useState<boolean>(
+    initialBatch ? !SAUDI_CITIES.includes(initialBatch.sectorCity) : false
+  );
+  const [visaType, setVisaType] = useState<string>(initialBatch?.visaType || 'Employment Work Visa (1-2 Years)');
+  const [totalVisas, setTotalVisas] = useState<number>(initialBatch?.totalVisas || 10);
+  const [amountPerVisa, setAmountPerVisa] = useState<number>(initialBatch?.amountPerVisa || 35000);
+  const [dateReceived, setDateReceived] = useState<string>(
+    initialBatch?.dateReceived || new Date().toISOString().split('T')[0]
+  );
   const [expiryDate, setExpiryDate] = useState<string>(
-    new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    initialBatch?.expiryDate || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
   );
   const [customVisaPrefix, setCustomVisaPrefix] = useState<string>('SAUDI-');
   const [customVisaNumbersInput, setCustomVisaNumbersInput] = useState<string>('');
-  const [notes, setNotes] = useState<string>('');
+  const [notes, setNotes] = useState<string>(initialBatch?.notes || '');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // Reset or populate fields whenever modal opens or initialBatch changes
+  useEffect(() => {
+    if (initialBatch) {
+      setSelectedPartnerId(initialBatch.partnerOfficeId);
+      const isStandardTrade = COMMON_SAUDI_TRADES.includes(initialBatch.jobTitle);
+      setJobTitle(isStandardTrade ? initialBatch.jobTitle : 'Other');
+      setCustomJobTitle(isStandardTrade ? '' : initialBatch.jobTitle);
+
+      const isStandardCity = SAUDI_CITIES.includes(initialBatch.sectorCity);
+      setSectorCity(isStandardCity ? initialBatch.sectorCity : 'Other');
+      setCustomSectorCity(isStandardCity ? '' : initialBatch.sectorCity);
+      setIsCustomSectorMode(!isStandardCity);
+
+      setVisaType(initialBatch.visaType || 'Employment Work Visa (1-2 Years)');
+      setTotalVisas(initialBatch.totalVisas);
+      setAmountPerVisa(initialBatch.amountPerVisa);
+      setDateReceived(initialBatch.dateReceived);
+      setExpiryDate(initialBatch.expiryDate || '');
+      setNotes(initialBatch.notes || '');
+      setCustomVisaNumbersInput('');
+    } else {
+      setSelectedPartnerId(partner?.id || allPartners[0]?.id || '');
+      setJobTitle('Electrician (Building / Industrial)');
+      setCustomJobTitle('');
+      setSectorCity('Riyadh Mega Projects');
+      setCustomSectorCity('');
+      setIsCustomSectorMode(false);
+      setVisaType('Employment Work Visa (1-2 Years)');
+      setTotalVisas(10);
+      setAmountPerVisa(35000);
+      setDateReceived(new Date().toISOString().split('T')[0]);
+      setExpiryDate(new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+      setNotes('');
+      setCustomVisaNumbersInput('');
+    }
+  }, [initialBatch, isOpen, partner, allPartners]);
 
   if (!isOpen) return null;
 
@@ -108,31 +165,77 @@ export const ReceiveVisaBatchModal: React.FC<ReceiveVisaBatchModalProps> = ({
       return;
     }
 
-    const customNumbers = customVisaNumbersInput
-      .split(/[\n,]/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
     const partnerName = currentPartner?.agencyName || 'Partner Office';
 
-    const result = addVisaBatchWithIndividualVisas(
-      {
-        partnerOfficeId: partner?.id || selectedPartnerId,
-        partnerOfficeName: partnerName,
-        jobTitle: effectiveJobTitle,
-        sectorCity: effectiveSectorCity,
-        visaType,
-        totalVisas: Number(totalVisas),
-        amountPerVisa: Number(amountPerVisa),
-        dateReceived,
-        expiryDate,
-        notes,
-      },
-      customNumbers.length > 0 ? customNumbers : undefined
-    );
+    if (isSubmitting) return;
+    setIsSubmitting(true);
 
-    onBatchAdded(result.batch);
-    onClose();
+    try {
+      if (isEditMode && initialBatch) {
+        if (Number(totalVisas) < (initialBatch.usedVisas || 0)) {
+          alert(`Total visas cannot be less than ${initialBatch.usedVisas || 0}, as ${initialBatch.usedVisas || 0} visa(s) are already allocated to candidates.`);
+          setIsSubmitting(false);
+          return;
+        }
+
+        // Safe in-place update strictly preserving ID and avoiding duplicate records
+        const updateResult = updateVisaBatch(
+          initialBatch.id,
+          {
+            partnerOfficeId: partner?.id || selectedPartnerId,
+            partnerOfficeName: partnerName,
+            jobTitle: effectiveJobTitle,
+            sectorCity: effectiveSectorCity,
+            visaType,
+            totalVisas: Number(totalVisas),
+            amountPerVisa: Number(amountPerVisa),
+            dateReceived,
+            expiryDate,
+            notes,
+          },
+          'Administrator'
+        );
+
+        if (!updateResult.success) {
+          alert(updateResult.message);
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (updateResult.batch) {
+          onBatchAdded(updateResult.batch);
+        }
+        onClose();
+        return;
+      }
+
+      // Create new batch
+      const customNumbers = customVisaNumbersInput
+        .split(/[\n,]/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+
+      const result = addVisaBatchWithIndividualVisas(
+        {
+          partnerOfficeId: partner?.id || selectedPartnerId,
+          partnerOfficeName: partnerName,
+          jobTitle: effectiveJobTitle,
+          sectorCity: effectiveSectorCity,
+          visaType,
+          totalVisas: Number(totalVisas),
+          amountPerVisa: Number(amountPerVisa),
+          dateReceived,
+          expiryDate,
+          notes,
+        },
+        customNumbers.length > 0 ? customNumbers : undefined
+      );
+
+      onBatchAdded(result.batch);
+      onClose();
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -142,14 +245,16 @@ export const ReceiveVisaBatchModal: React.FC<ReceiveVisaBatchModalProps> = ({
         <div className="bg-[#0F1E36] p-6 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400">
-              <Ticket className="w-5 h-5" />
+              {isEditMode ? <Edit3 className="w-5 h-5" /> : <Ticket className="w-5 h-5" />}
             </div>
             <div>
               <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest block">
                 Visa Inventory Management
               </span>
               <h3 className="text-lg font-bold font-display text-white">
-                Receive Saudi Visa Batch from Partner Office
+                {isEditMode
+                  ? `Edit Visa Batch: ${initialBatch?.batchId}`
+                  : 'Receive Saudi Visa Batch from Partner Office'}
               </h3>
             </div>
           </div>
@@ -371,8 +476,12 @@ export const ReceiveVisaBatchModal: React.FC<ReceiveVisaBatchModalProps> = ({
               </span>
             </div>
             <div className="text-left sm:text-right text-[11px] text-slate-300 bg-white/10 px-3 py-2 rounded-lg">
-              <span className="block font-medium">Automatic Provisioning:</span>
-              <strong className="text-amber-300">{totalVisas} unique individual visa records</strong> will be generated.
+              <span className="block font-medium">{isEditMode ? 'In-Place Batch Update:' : 'Automatic Provisioning:'}</span>
+              <strong className="text-amber-300">
+                {isEditMode
+                  ? `${initialBatch?.usedVisas || 0} visas used / ${Math.max(0, totalVisas - (initialBatch?.usedVisas || 0))} remaining`
+                  : `${totalVisas} unique individual visa records will be generated`}
+              </strong>
             </div>
           </div>
 
@@ -437,10 +546,17 @@ export const ReceiveVisaBatchModal: React.FC<ReceiveVisaBatchModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold shadow-md transition-all flex items-center gap-2"
+              disabled={isSubmitting}
+              className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-bold shadow-md transition-all flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>Confirm & Generate {totalVisas} Visas</span>
+              <span>
+                {isSubmitting
+                  ? (isEditMode ? 'Updating Batch...' : 'Generating Visas...')
+                  : isEditMode
+                  ? 'Update Visa Batch'
+                  : `Confirm & Generate ${totalVisas} Visas`}
+              </span>
             </button>
           </div>
         </form>

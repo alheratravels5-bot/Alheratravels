@@ -33,7 +33,9 @@ import {
   savePartnerToFirestore,
   savePartnerPaymentToFirestore,
   savePartnerLedgerToFirestore,
-  deletePartnerPaymentFromFirestore
+  deletePartnerPaymentFromFirestore,
+  deleteVisaBatchFromFirestore,
+  deleteIndividualVisaFromFirestore
 } from './firebase';
 
 export const AGENCY_INFO: AgencyInfo = {
@@ -2318,6 +2320,175 @@ export const addVisaBatchWithIndividualVisas = (
   );
 
   return { batch: newBatch, count: total };
+};
+
+/**
+ * Update an existing Visa Batch in-place without creating duplicate records.
+ * Updates batch metadata, adjusts price per visa, and synchronizes unassigned individual visas.
+ */
+export const updateVisaBatch = (
+  batchIdOrId: string,
+  updates: Partial<VisaBatch>,
+  user: string = 'Administrator'
+): { success: boolean; message: string; batch?: VisaBatch } => {
+  const allBatches = getVisaBatches();
+  const allVisas = getIndividualVisas();
+
+  const batchIndex = allBatches.findIndex(
+    (b) => b.id === batchIdOrId || b.batchId === batchIdOrId
+  );
+  if (batchIndex === -1) {
+    return { success: false, message: 'Visa Batch not found.' };
+  }
+
+  const existingBatch = allBatches[batchIndex];
+
+  // Calculate new financials while keeping counts consistent
+  const totalVisas = updates.totalVisas !== undefined ? Math.max(existingBatch.usedVisas, Number(updates.totalVisas)) : existingBatch.totalVisas;
+  const amountPerVisa = updates.amountPerVisa !== undefined ? Math.max(0, Number(updates.amountPerVisa)) : existingBatch.amountPerVisa;
+  const remainingVisas = Math.max(0, totalVisas - existingBatch.usedVisas);
+  const totalAmount = totalVisas * amountPerVisa;
+  const usedVisaValue = existingBatch.usedVisas * amountPerVisa;
+  const remainingVisaValue = remainingVisas * amountPerVisa;
+
+  const updatedBatch: VisaBatch = {
+    ...existingBatch,
+    ...updates,
+    id: existingBatch.id, // Strictly preserve unique identifier
+    batchId: updates.batchId?.trim() || existingBatch.batchId, // Maintain batch reference code
+    partnerOfficeId: updates.partnerOfficeId || existingBatch.partnerOfficeId,
+    partnerOfficeName: updates.partnerOfficeName || existingBatch.partnerOfficeName,
+    jobTitle: updates.jobTitle?.trim() || existingBatch.jobTitle,
+    sectorCity: updates.sectorCity?.trim() || existingBatch.sectorCity,
+    visaType: updates.visaType || existingBatch.visaType,
+    totalVisas,
+    usedVisas: existingBatch.usedVisas,
+    remainingVisas,
+    amountPerVisa,
+    totalAmount,
+    usedVisaValue,
+    remainingVisaValue,
+    dateReceived: updates.dateReceived || existingBatch.dateReceived,
+    expiryDate: updates.expiryDate !== undefined ? updates.expiryDate : existingBatch.expiryDate,
+    notes: updates.notes !== undefined ? updates.notes : existingBatch.notes,
+    status: (remainingVisas === 0 ? 'Fully Used' : existingBatch.usedVisas > 0 ? 'Partially Used' : 'Available') as any,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Replace strictly in-place (prevent any duplicate records)
+  const updatedBatches = [...allBatches];
+  updatedBatches[batchIndex] = updatedBatch;
+
+  // Sync associated Individual Visas that are still Available (unassigned)
+  const updatedVisas = allVisas.map((v) => {
+    if (v.batchId === existingBatch.id || v.batchCode === existingBatch.batchId) {
+      return {
+        ...v,
+        batchCode: updatedBatch.batchId,
+        jobTitle: updatedBatch.jobTitle,
+        sectorCity: updatedBatch.sectorCity,
+        visaType: updatedBatch.visaType,
+        partnerOfficeName: updatedBatch.partnerOfficeName,
+        // Only update rate on unassigned visas to keep candidate records untampered
+        visaAmount: v.candidateId ? v.visaAmount : amountPerVisa,
+        partnerPayableAmount: v.candidateId ? v.partnerPayableAmount : amountPerVisa,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    return v;
+  });
+
+  saveVisaBatches(updatedBatches);
+  saveIndividualVisas(updatedVisas);
+
+  addAuditLog(
+    updatedBatch.partnerOfficeId,
+    updatedBatch.partnerOfficeName,
+    'Visa Batch Updated',
+    `Updated Batch ${updatedBatch.batchId} (${updatedBatch.jobTitle}, ${updatedBatch.totalVisas} Visas @ ₹${amountPerVisa.toLocaleString('en-IN')})`,
+    user
+  );
+
+  return {
+    success: true,
+    message: `Batch ${updatedBatch.batchId} updated successfully.`,
+    batch: updatedBatch,
+  };
+};
+
+/**
+ * Delete a specific Visa Batch safely.
+ * Safeguard: If any visas from this batch are already assigned to candidates, deletion is blocked
+ * to ensure candidates and accounts modules remain completely uncorrupted.
+ * Only the selected batch and its unassigned inventory records are deleted.
+ */
+export const deleteVisaBatch = (
+  batchIdOrId: string,
+  user: string = 'Administrator'
+): { success: boolean; message: string; deletedBatchId?: string } => {
+  const allBatches = getVisaBatches();
+  const allVisas = getIndividualVisas();
+
+  const targetBatch = allBatches.find(
+    (b) => b.id === batchIdOrId || b.batchId === batchIdOrId
+  );
+  if (!targetBatch) {
+    return { success: false, message: 'Visa Batch not found.' };
+  }
+
+  // Check if any visa from this batch has been assigned to candidates
+  const assignedVisas = allVisas.filter(
+    (v) =>
+      (v.batchId === targetBatch.id || v.batchCode === targetBatch.batchId) &&
+      (v.candidateId || (v.candidateTrackingId && v.candidateTrackingId.trim() !== ''))
+  );
+
+  if (assignedVisas.length > 0) {
+    return {
+      success: false,
+      message: `Cannot delete Batch ${targetBatch.batchId}: ${assignedVisas.length} visa(s) are already linked to candidate(s). Please unassign candidates first.`,
+    };
+  }
+
+  // Filter out ONLY the target batch
+  const remainingBatches = allBatches.filter(
+    (b) => b.id !== targetBatch.id && b.batchId !== targetBatch.batchId
+  );
+
+  // Filter out ONLY the unassigned individual visas belonging strictly to this batch
+  const batchVisasToDelete = allVisas.filter(
+    (v) => v.batchId === targetBatch.id || v.batchCode === targetBatch.batchId
+  );
+  const remainingVisas = allVisas.filter(
+    (v) => v.batchId !== targetBatch.id && v.batchCode !== targetBatch.batchId
+  );
+
+  // Save updated local storage and sync to Supabase
+  saveVisaBatches(remainingBatches);
+  saveIndividualVisas(remainingVisas);
+
+  // Clean up Firestore documents for this batch and its visas
+  deleteVisaBatchFromFirestore(targetBatch.id);
+  batchVisasToDelete.forEach((v) => {
+    deleteIndividualVisaFromFirestore(v.id);
+  });
+
+  // Clean up Supabase
+  deleteRecordFromSupabase('visa_batches', 'id', targetBatch.id);
+
+  addAuditLog(
+    targetBatch.partnerOfficeId,
+    targetBatch.partnerOfficeName,
+    'Visa Batch Deleted',
+    `Deleted Batch ${targetBatch.batchId} (${targetBatch.jobTitle}, ${targetBatch.totalVisas} Visas)`,
+    user
+  );
+
+  return {
+    success: true,
+    message: `Visa Batch ${targetBatch.batchId} deleted successfully.`,
+    deletedBatchId: targetBatch.id,
+  };
 };
 
 /**
