@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Clock,
   UserCheck,
+  UserX,
   Edit3,
   Trash2,
   Search,
@@ -29,6 +30,7 @@ interface ViewVisaBatchModalProps {
   onEdit?: (batch: VisaBatch) => void;
   onDelete?: (batch: VisaBatch) => void;
   onAssignVisa?: (visa: IndividualVisa) => void;
+  onUnassignVisa?: (visa: IndividualVisa) => void;
   onSelectCandidateDetail?: (candidate: Candidate) => void;
 }
 
@@ -41,22 +43,23 @@ export const ViewVisaBatchModal: React.FC<ViewVisaBatchModalProps> = ({
   onEdit,
   onDelete,
   onAssignVisa,
+  onUnassignVisa,
   onSelectCandidateDetail,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'Available' | 'Assigned'>('all');
 
-  if (!isOpen || !batch) return null;
-
-  // Filter individual visas belonging to this batch
+  // Filter individual visas belonging to this batch - unconditionally called to respect Rules of Hooks
   const batchVisas = useMemo(() => {
+    if (!batch) return [];
     return allVisas.filter(
       (v) => v.batchId === batch.id || v.batchCode === batch.batchId
     );
-  }, [allVisas, batch.id, batch.batchId]);
+  }, [allVisas, batch?.id, batch?.batchId]);
 
-  // Filtered visas based on search and status
+  // Filtered visas based on search and status - unconditionally called
   const filteredVisas = useMemo(() => {
+    if (!batch) return [];
     return batchVisas.filter((v) => {
       if (statusFilter === 'Available' && v.visaStatus !== 'Available') return false;
       if (statusFilter === 'Assigned' && v.visaStatus === 'Available') return false;
@@ -72,7 +75,9 @@ export const ViewVisaBatchModal: React.FC<ViewVisaBatchModalProps> = ({
         (v.sponsorName && v.sponsorName.toLowerCase().includes(q))
       );
     });
-  }, [batchVisas, searchTerm, statusFilter]);
+  }, [batch, batchVisas, searchTerm, statusFilter]);
+
+  if (!isOpen || !batch) return null;
 
   // Compute stats
   const totalVisas = batch.totalVisas || batchVisas.length;
@@ -367,10 +372,23 @@ export const ViewVisaBatchModal: React.FC<ViewVisaBatchModalProps> = ({
                                   onClose();
                                   onAssignVisa(v);
                                 }}
-                                className="px-2 py-1 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[10px] transition-colors inline-flex items-center gap-1"
+                                className="px-2 py-1 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[10px] transition-colors inline-flex items-center gap-1 cursor-pointer"
                               >
                                 <UserCheck className="w-3 h-3" />
                                 <span>Assign</span>
+                              </button>
+                            )}
+                            {isAssigned && onUnassignVisa && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onUnassignVisa(v);
+                                }}
+                                className="px-2 py-1 rounded-md bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[10px] transition-colors inline-flex items-center gap-1 cursor-pointer"
+                                title="Unassign candidate from this visa"
+                              >
+                                <UserX className="w-3 h-3" />
+                                <span>Unassign</span>
                               </button>
                             )}
                           </td>

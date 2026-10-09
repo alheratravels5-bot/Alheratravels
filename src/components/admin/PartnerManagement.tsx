@@ -15,6 +15,7 @@ import {
   Search,
   Ticket,
   UserCheck,
+  UserX,
   TrendingUp,
   CreditCard,
   FileSpreadsheet,
@@ -49,7 +50,8 @@ import {
   savePartnerLedger,
   getPartnerAuditLogs,
   savePartnerAuditLogs,
-  getPartners
+  getPartners,
+  unlinkVisaFromCandidate
 } from '../../lib/storage';
 import { computePartnerFinancials } from '../../lib/partnerCalculations';
 import { PartnerDetailView } from './partner/PartnerDetailView';
@@ -93,6 +95,7 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
   const [editingVisaBatch, setEditingVisaBatch] = useState<VisaBatch | null>(null);
   const [isAssignCandidateOpen, setIsAssignCandidateOpen] = useState(false);
   const [selectedVisaForAssignment, setSelectedVisaForAssignment] = useState<IndividualVisa | null>(null);
+  const [assignModalInitialTab, setAssignModalInitialTab] = useState<'assign' | 'unassign'>('assign');
   const [isRecordPaymentOpen, setIsRecordPaymentOpen] = useState(false);
   const [selectedCandidateIdForPayment, setSelectedCandidateIdForPayment] = useState<string>('');
   const [isLedgerModalOpen, setIsLedgerModalOpen] = useState(false);
@@ -262,6 +265,23 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
     loadData();
   };
 
+  const handleUnassignVisa = (visa: IndividualVisa) => {
+    const candidateName = visa.candidateName || 'the assigned candidate';
+    if (!confirm(`Are you sure you want to unassign ${candidateName} from Visa ${visa.visaId}? The visa will return to Available status and job quota will be restored.`)) {
+      return;
+    }
+    try {
+      const res = unlinkVisaFromCandidate(visa.id, 'Administrator');
+      if (res.success) {
+        loadData();
+      } else {
+        alert(res.message);
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Error unassigning candidate.');
+    }
+  };
+
   // Available visas for assignment across selected partner or all
   const availableVisasForAssignment = useMemo(() => {
     if (selectedPartnerId) {
@@ -292,8 +312,9 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
           setEditingVisaBatch(batch);
           setIsReceiveBatchOpen(true);
         }}
-        onOpenAssignCandidate={(visa) => {
+        onOpenAssignCandidate={(visa, mode) => {
           setSelectedVisaForAssignment(visa || null);
+          setAssignModalInitialTab(mode || (visa?.candidateId ? 'unassign' : 'assign'));
           setIsAssignCandidateOpen(true);
         }}
         onOpenRecordPayment={(candId) => {
@@ -349,12 +370,26 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
           <button
             onClick={() => {
               setSelectedVisaForAssignment(null);
+              setAssignModalInitialTab('assign');
               setIsAssignCandidateOpen(true);
             }}
-            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md transition-all"
+            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
           >
             <UserCheck className="w-4 h-4" />
             <span>Assign Candidate</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setSelectedVisaForAssignment(null);
+              setAssignModalInitialTab('unassign');
+              setIsAssignCandidateOpen(true);
+            }}
+            className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+            title="Unassign candidate from visa"
+          >
+            <UserX className="w-4 h-4" />
+            <span>Unassign Candidate</span>
           </button>
 
           <button
@@ -972,7 +1007,9 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
         partner={null}
         visa={selectedVisaForAssignment}
         availableVisas={availableVisasForAssignment}
+        allVisas={individualVisas}
         candidates={candidates}
+        initialTab={assignModalInitialTab}
         onAssigned={() => {
           loadData();
         }}
@@ -1178,6 +1215,9 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
           setSelectedBatchForView(null);
           setSelectedVisaForAssignment(visa);
           setIsAssignCandidateOpen(true);
+        }}
+        onUnassignVisa={(visa) => {
+          handleUnassignVisa(visa);
         }}
         onSelectCandidateDetail={onSelectCandidateDetail}
       />

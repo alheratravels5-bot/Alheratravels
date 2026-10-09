@@ -32,6 +32,7 @@ import {
   FileText,
   X,
   User,
+  UserX,
   Edit3,
   Trash2
 } from 'lucide-react';
@@ -45,7 +46,7 @@ import {
   PartnerAuditLog,
   AgencyInfo
 } from '../../../types';
-import { getAgencyInfo, deletePartnerPaymentRecord, deleteVisaBatch } from '../../../lib/storage';
+import { getAgencyInfo, deletePartnerPaymentRecord, deleteVisaBatch, unlinkVisaFromCandidate } from '../../../lib/storage';
 import { computePartnerFinancials, computeRunningLedger } from '../../../lib/partnerCalculations';
 import { generatePartnerStatementPdf } from '../../../lib/pdfGenerator';
 import { PartnerLedgerModal } from './PartnerLedgerModal';
@@ -64,7 +65,7 @@ interface PartnerDetailViewProps {
   onBack: () => void;
   onOpenReceiveBatch: () => void;
   onOpenEditBatch?: (batch: VisaBatch) => void;
-  onOpenAssignCandidate: (visa?: IndividualVisa) => void;
+  onOpenAssignCandidate: (visa?: IndividualVisa, mode?: 'assign' | 'unassign') => void;
   onOpenRecordPayment: (candidateId?: string) => void;
   onOpenFullLedger: () => void;
   onSelectCandidateDetail?: (candidate: Candidate) => void;
@@ -164,6 +165,23 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
     } finally {
       setIsDeleting(false);
       setDeleteConfirmTarget(null);
+    }
+  };
+
+  const handleUnassignCandidate = (visa: IndividualVisa) => {
+    const candidateName = visa.candidateName || 'the assigned candidate';
+    if (!confirm(`Are you sure you want to unassign ${candidateName} from Visa ${visa.visaId}? The visa will return to Available status and job quota will be restored.`)) {
+      return;
+    }
+    try {
+      const res = unlinkVisaFromCandidate(visa.id, 'Administrator');
+      if (res.success) {
+        if (onRefreshData) onRefreshData();
+      } else {
+        alert(res.message);
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Error unassigning candidate.');
     }
   };
 
@@ -419,10 +437,19 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
 
           <button
             onClick={() => onOpenAssignCandidate()}
-            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
+            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
           >
             <UserCheck className="w-3.5 h-3.5" />
             <span>Assign Candidate</span>
+          </button>
+
+          <button
+            onClick={() => onOpenAssignCandidate(undefined, 'unassign')}
+            className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+            title="Unassign candidate from visa"
+          >
+            <UserX className="w-3.5 h-3.5" />
+            <span>Unassign Candidate</span>
           </button>
 
           <button
@@ -1025,13 +1052,26 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
                       <td className="py-3 px-4 text-right">
                         {!isAssigned ? (
                           <button
+                            type="button"
                             onClick={() => onOpenAssignCandidate(v)}
-                            className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px]"
+                            className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
                           >
-                            Assign
+                            <UserCheck className="w-3.5 h-3.5" />
+                            <span>Assign</span>
                           </button>
                         ) : (
-                          <span className="text-[10px] font-semibold text-slate-400">Assigned</span>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span className="text-[10px] font-semibold text-slate-400">Assigned</span>
+                            <button
+                              type="button"
+                              onClick={() => handleUnassignCandidate(v)}
+                              className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] inline-flex items-center gap-1 transition-all cursor-pointer"
+                              title="Unassign candidate from this visa"
+                            >
+                              <UserX className="w-3.5 h-3.5" />
+                              <span>Unassign</span>
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -1249,12 +1289,23 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
                             </button>
                             <button
                               onClick={() => onOpenRecordPayment(c.id)}
-                              className="px-2.5 py-1 rounded-lg bg-[#0F1E36] hover:bg-[#1A3258] text-amber-400 font-bold text-[11px] flex items-center gap-1 transition-all"
+                              className="px-2.5 py-1 rounded-lg bg-[#0F1E36] hover:bg-[#1A3258] text-amber-400 font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer"
                               title="Record a payment to partner for this candidate"
                             >
                               <DollarSign className="w-3 h-3 text-emerald-400" />
                               <span>Pay</span>
                             </button>
+                            {item.linkedVisa && (
+                              <button
+                                type="button"
+                                onClick={() => handleUnassignCandidate(item.linkedVisa!)}
+                                className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer"
+                                title={`Unassign ${c.fullName} from Visa ${item.linkedVisa.visaId}`}
+                              >
+                                <UserX className="w-3 h-3" />
+                                <span>Unassign</span>
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1960,6 +2011,9 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
         onAssignVisa={(visa) => {
           setSelectedBatchForView(null);
           onOpenAssignCandidate(visa);
+        }}
+        onUnassignVisa={(visa) => {
+          handleUnassignCandidate(visa);
         }}
         onSelectCandidateDetail={onSelectCandidateDetail}
       />
