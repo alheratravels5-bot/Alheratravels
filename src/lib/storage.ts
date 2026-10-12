@@ -2770,6 +2770,59 @@ export const unlinkVisaFromCandidate = (
 };
 
 /**
+ * Directly Unassign a Candidate from their linked Visa
+ */
+export const unlinkCandidateFromVisa = (
+  candidateId: string,
+  user: string = 'Administrator'
+): { success: boolean; message: string } => {
+  const allVisas = getIndividualVisas();
+  const allCandidates = getCandidates();
+
+  const cand = allCandidates.find((c) => c.id === candidateId || c.trackingId === candidateId);
+  if (!cand) {
+    return { success: false, message: 'Candidate record not found.' };
+  }
+
+  // 1. Check if an active visa is linked
+  const linkedVisa = allVisas.find(
+    (v) =>
+      v.candidateId === cand.id ||
+      (cand.trackingId && v.candidateTrackingId === cand.trackingId) ||
+      (cand.visaId && (v.id === cand.visaId || v.visaId === cand.visaId))
+  );
+
+  if (linkedVisa) {
+    return unlinkVisaFromCandidate(linkedVisa.id, user);
+  }
+
+  // 2. Fallback: Candidate had visa metadata but no matching inventory visa record
+  if (cand.visaId || cand.partnerOfficeId) {
+    const updatedCandidates = allCandidates.map((c) => {
+      if (c.id === cand.id) {
+        return {
+          ...c,
+          visaId: undefined,
+          visaBatchId: undefined,
+          partnerOfficeId: undefined,
+          partnerOfficeName: undefined,
+          visaAmount: 0,
+          alHeraCommission: 0,
+          partnerPayableAmount: 0,
+          balanceDue: Number(c.packageFee || 0) - Number(c.totalPaid || 0),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return c;
+    });
+    saveCandidates(updatedCandidates);
+    return { success: true, message: `Candidate ${cand.fullName} has been successfully unassigned.` };
+  }
+
+  return { success: false, message: `Candidate ${cand.fullName} is not currently assigned to any visa.` };
+};
+
+/**
  * Record a Payment made to a Partner Office
  */
 export const recordPartnerPayment = (

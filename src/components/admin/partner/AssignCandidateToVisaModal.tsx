@@ -18,7 +18,7 @@ import {
   Users
 } from 'lucide-react';
 import { PartnerOffice, IndividualVisa, Candidate, JobVacancy } from '../../../types';
-import { linkVisaToCandidate, unlinkVisaFromCandidate, getJobs, getCandidates } from '../../../lib/storage';
+import { linkVisaToCandidate, unlinkVisaFromCandidate, unlinkCandidateFromVisa, getJobs, getCandidates, getIndividualVisas } from '../../../lib/storage';
 import { enrichAllJobsWithMetrics, computeJobCandidateMetrics } from '../../../lib/jobCalculations';
 
 interface AssignCandidateToVisaModalProps {
@@ -83,6 +83,8 @@ export const AssignCandidateToVisaModal: React.FC<AssignCandidateToVisaModalProp
   // Combine visas for unassignment tracking
   const effectiveAllVisas = useMemo(() => {
     if (allVisas && allVisas.length > 0) return allVisas;
+    const fromStorage = getIndividualVisas();
+    if (fromStorage && fromStorage.length > 0) return fromStorage;
     return availableVisas;
   }, [allVisas, availableVisas]);
 
@@ -93,11 +95,71 @@ export const AssignCandidateToVisaModal: React.FC<AssignCandidateToVisaModalProp
     );
   }, [effectiveAllVisas]);
 
-  // Filter assigned visas for the Unassign tab
+  // Combine assigned visas and any assigned candidates for comprehensive unassignment
+  const allAssignedRecords = useMemo(() => {
+    const list: Array<{
+      key: string;
+      candidateId?: string;
+      candidateName: string;
+      candidateTrackingId: string;
+      candidatePassport: string;
+      visaId: string;
+      visaNumber?: string;
+      jobTitle: string;
+      sectorCity: string;
+      partnerOfficeName: string;
+      partnerOfficeId?: string;
+      visaRecord?: IndividualVisa;
+    }> = [];
+
+    // From assigned visas
+    assignedVisas.forEach((v) => {
+      list.push({
+        key: 'visa-' + v.id,
+        candidateId: v.candidateId,
+        candidateName: v.candidateName || 'Assigned Candidate',
+        candidateTrackingId: v.candidateTrackingId || '',
+        candidatePassport: v.candidatePassport || '',
+        visaId: v.visaId,
+        visaNumber: v.visaNumber,
+        jobTitle: v.jobTitle || 'General Visa',
+        sectorCity: v.sectorCity || 'Saudi Arabia',
+        partnerOfficeName: v.partnerOfficeName || 'Partner Office',
+        partnerOfficeId: v.partnerOfficeId,
+        visaRecord: v,
+      });
+    });
+
+    // From candidates that have a visaId or partnerOfficeId not already in list
+    candidates.forEach((c) => {
+      if (
+        (c.visaId || c.partnerOfficeId) &&
+        !list.some((item) => item.candidateId === c.id || item.candidateTrackingId === c.trackingId)
+      ) {
+        list.push({
+          key: 'cand-' + c.id,
+          candidateId: c.id,
+          candidateName: c.fullName,
+          candidateTrackingId: c.trackingId,
+          candidatePassport: c.passportNumber,
+          visaId: c.visaId || 'Partner Allocation',
+          visaNumber: '',
+          jobTitle: c.trade || 'General Trade',
+          sectorCity: 'Saudi Arabia',
+          partnerOfficeName: c.partnerOfficeName || 'Partner Office',
+          partnerOfficeId: c.partnerOfficeId,
+        });
+      }
+    });
+
+    return list;
+  }, [assignedVisas, candidates]);
+
+  // Filter assigned items for the Unassign tab
   const filteredAssignedVisas = useMemo(() => {
     const q = unassignSearch.toLowerCase().trim();
-    return assignedVisas.filter((v) => {
-      if (partner?.id && v.partnerOfficeId !== partner.id) return false;
+    return allAssignedRecords.filter((v) => {
+      if (partner?.id && v.partnerOfficeId && v.partnerOfficeId !== partner.id) return false;
       if (!q) return true;
       return (
         v.visaId.toLowerCase().includes(q) ||
@@ -109,7 +171,7 @@ export const AssignCandidateToVisaModal: React.FC<AssignCandidateToVisaModalProp
         (v.partnerOfficeName && v.partnerOfficeName.toLowerCase().includes(q))
       );
     });
-  }, [assignedVisas, unassignSearch, partner?.id]);
+  }, [allAssignedRecords, unassignSearch, partner?.id]);
 
   const currentVisa = useMemo(() => {
     if (initialVisa) return initialVisa;
@@ -124,7 +186,8 @@ export const AssignCandidateToVisaModal: React.FC<AssignCandidateToVisaModalProp
 
   // Load and enrich jobs with live metrics
   const allCandidatesList = useMemo(() => getCandidates(), []);
-  const rawJobsList = propJobs || useMemo(() => getJobs(), []);
+  const loadedJobs = useMemo(() => getJobs(), []);
+  const rawJobsList = propJobs || loadedJobs;
   const enrichedJobs = useMemo(() => {
     return enrichAllJobsWithMetrics(rawJobsList, allCandidatesList);
   }, [rawJobsList, allCandidatesList]);
@@ -228,28 +291,55 @@ export const AssignCandidateToVisaModal: React.FC<AssignCandidateToVisaModalProp
     onClose();
   };
 
-  const handleUnassignVisaRecord = (v: IndividualVisa) => {
+  const handleUnassignRecord = (record: {
+    candidateId?: string;
+    candidateName: string;
+    candidateTrackingId: string;
+    visaId: string;
+    visaRecord?: IndividualVisa;
+  }) => {
     setErrorMessage('');
     setSuccessMessage('');
-    const candName = v.candidateName || 'the assigned candidate';
+    const candName = record.candidateName || 'the assigned candidate';
     if (
       !confirm(
-        `Are you sure you want to unassign ${candName} from Visa ${v.visaId}? The visa status will return to Available and vacancy quota will be restored.`
+        `Are you sure you want to unassign ${candName} (${record.candidateTrackingId || record.visaId}) from their Saudi visa? The visa status will return to Available and vacancy quota will be restored.`
       )
     ) {
       return;
     }
 
-    const res = unlinkVisaFromCandidate(v.id, 'Administrator');
+    let res: { success: boolean; message: string };
+    if (record.visaRecord) {
+      res = unlinkVisaFromCandidate(record.visaRecord.id, 'Administrator');
+    } else if (record.candidateId) {
+      res = unlinkCandidateFromVisa(record.candidateId, 'Administrator');
+    } else {
+      res = unlinkVisaFromCandidate(record.visaId, 'Administrator');
+    }
+
     if (res.success) {
-      setSuccessMessage(`Successfully unassigned ${candName} from Visa ${v.visaId}.`);
+      setSuccessMessage(res.message);
       onAssigned();
-      if (initialVisa?.id === v.id) {
+      if (selectedCandidateId === record.candidateId) {
+        setSelectedCandidateId('');
+      }
+      if (initialVisa?.id === record.visaRecord?.id) {
         onClose();
       }
     } else {
       setErrorMessage(res.message);
     }
+  };
+
+  const handleUnassignVisaRecord = (v: IndividualVisa) => {
+    handleUnassignRecord({
+      candidateId: v.candidateId,
+      candidateName: v.candidateName || 'Assigned Candidate',
+      candidateTrackingId: v.candidateTrackingId || '',
+      visaId: v.visaId,
+      visaRecord: v,
+    });
   };
 
   const handleUnassignCurrentVisa = () => {
@@ -545,29 +635,50 @@ export const AssignCandidateToVisaModal: React.FC<AssignCandidateToVisaModalProp
                       </span>
                     </div>
                   </div>
-                  {selectedCandidate.visaId && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900">
-                        Linked: {selectedCandidate.visaId}
-                      </span>
+                  <div className="flex items-center gap-2">
+                    {selectedCandidate.visaId ? (
+                      <>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900">
+                          Linked: {selectedCandidate.visaId}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const linked = effectiveAllVisas.find(
+                              (v) =>
+                                v.candidateId === selectedCandidate.id ||
+                                v.candidateTrackingId === selectedCandidate.trackingId
+                            );
+                            if (linked) {
+                              handleUnassignVisaRecord(linked);
+                            } else {
+                              handleUnassignRecord({
+                                candidateId: selectedCandidate.id,
+                                candidateName: selectedCandidate.fullName,
+                                candidateTrackingId: selectedCandidate.trackingId,
+                                visaId: selectedCandidate.visaId || '',
+                              });
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer transition-all"
+                          title="Unassign candidate from their current visa"
+                        >
+                          <UserX className="w-3.5 h-3.5" />
+                          <span>Unassign Candidate</span>
+                        </button>
+                      </>
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => {
-                          const linked = effectiveAllVisas.find((v) => v.candidateId === selectedCandidate.id || v.candidateTrackingId === selectedCandidate.trackingId);
-                          if (linked) {
-                            handleUnassignVisaRecord(linked);
-                          } else {
-                            alert(`Visa record for ${selectedCandidate.fullName} not found in current inventory.`);
-                          }
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] flex items-center gap-1 cursor-pointer"
-                        title="Unassign candidate from their current visa"
+                        onClick={() => setSelectedCandidateId('')}
+                        className="px-2.5 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-[10px] flex items-center gap-1 cursor-pointer transition-all"
+                        title="Clear candidate selection"
                       >
-                        <UserX className="w-3 h-3" />
-                        <span>Unassign</span>
+                        <X className="w-3 h-3" />
+                        <span>Clear Selection</span>
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -702,7 +813,7 @@ export const AssignCandidateToVisaModal: React.FC<AssignCandidateToVisaModalProp
                   </thead>
                   <tbody className="divide-y divide-slate-200 bg-white">
                     {filteredAssignedVisas.map((v) => (
-                      <tr key={v.id} className="hover:bg-slate-50 transition-colors">
+                      <tr key={v.key} className="hover:bg-slate-50 transition-colors">
                         <td className="py-2.5 px-3">
                           <strong className="text-slate-900 block text-xs">
                             {v.candidateName || 'Assigned Candidate'}
@@ -731,7 +842,7 @@ export const AssignCandidateToVisaModal: React.FC<AssignCandidateToVisaModalProp
                         <td className="py-2.5 px-3 text-right">
                           <button
                             type="button"
-                            onClick={() => handleUnassignVisaRecord(v)}
+                            onClick={() => handleUnassignRecord(v)}
                             className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
                             title={`Unassign ${v.candidateName || 'candidate'} from Visa ${v.visaId}`}
                           >

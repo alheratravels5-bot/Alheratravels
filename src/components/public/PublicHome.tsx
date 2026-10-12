@@ -291,7 +291,7 @@ export const PublicHome: React.FC<PublicHomeProps> = ({
           </div>
 
           <button
-            onClick={() => onNavigate('public_jobs')}
+            onClick={() => navigateTo('public_jobs')}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold text-xs shadow-md transition-all self-start md:self-auto"
           >
             <span>View All Saudi Openings</span>
@@ -564,7 +564,7 @@ export const PublicHome: React.FC<PublicHomeProps> = ({
         isOpen={!!selectedJobForApply}
         onClose={() => setSelectedJobForApply(null)}
         onSuccess={(c) => {
-          onNavigate('public_tracking', c.trackingId);
+          navigateTo('public_tracking', c.trackingId);
         }}
       />
 

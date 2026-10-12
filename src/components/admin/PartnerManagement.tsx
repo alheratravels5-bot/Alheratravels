@@ -81,12 +81,12 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
   // Navigation & Selected Partner
   const [selectedPartnerId, setSelectedPartnerId] = useState<string | null>(null);
 
-  // Entities state loaded from storage
-  const [visaBatches, setVisaBatches] = useState<VisaBatch[]>([]);
-  const [individualVisas, setIndividualVisas] = useState<IndividualVisa[]>([]);
-  const [partnerPayments, setPartnerPayments] = useState<PartnerOfficePayment[]>([]);
-  const [partnerLedger, setPartnerLedger] = useState<PartnerOfficeLedgerEntry[]>([]);
-  const [partnerAuditLogs, setPartnerAuditLogs] = useState<PartnerAuditLog[]>([]);
+  // Entities state loaded from storage with safe lazy-initializers
+  const [visaBatches, setVisaBatches] = useState<VisaBatch[]>(() => getVisaBatches());
+  const [individualVisas, setIndividualVisas] = useState<IndividualVisa[]>(() => getIndividualVisas());
+  const [partnerPayments, setPartnerPayments] = useState<PartnerOfficePayment[]>(() => getPartnerPayments());
+  const [partnerLedger, setPartnerLedger] = useState<PartnerOfficeLedgerEntry[]>(() => getPartnerLedger());
+  const [partnerAuditLogs, setPartnerAuditLogs] = useState<PartnerAuditLog[]>(() => getPartnerAuditLogs());
 
   // Modals state
   const [isPartnerFormOpen, setIsPartnerFormOpen] = useState(false);
@@ -136,6 +136,11 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
 
   useEffect(() => {
     loadData();
+    const handleSync = () => loadData();
+    window.addEventListener('al_hera_data_synced', handleSync);
+    return () => {
+      window.removeEventListener('al_hera_data_synced', handleSync);
+    };
   }, [partners]);
 
   // Network Financial Rollups
@@ -1196,43 +1201,47 @@ export const PartnerManagement: React.FC<PartnerManagementProps> = ({
       )}
 
       {/* 5. View Visa Batch Modal */}
-      <ViewVisaBatchModal
-        isOpen={!!selectedBatchForView}
-        onClose={() => setSelectedBatchForView(null)}
-        batch={selectedBatchForView}
-        allVisas={individualVisas}
-        allCandidates={candidates}
-        onEdit={(batch) => {
-          setSelectedBatchForView(null);
-          setEditingVisaBatch(batch);
-          setIsReceiveBatchOpen(true);
-        }}
-        onDelete={(batch) => {
-          setSelectedBatchForView(null);
-          setBatchDeleteTarget(batch);
-        }}
-        onAssignVisa={(visa) => {
-          setSelectedBatchForView(null);
-          setSelectedVisaForAssignment(visa);
-          setIsAssignCandidateOpen(true);
-        }}
-        onUnassignVisa={(visa) => {
-          handleUnassignVisa(visa);
-        }}
-        onSelectCandidateDetail={onSelectCandidateDetail}
-      />
+      {selectedBatchForView && (
+        <ViewVisaBatchModal
+          isOpen={true}
+          onClose={() => setSelectedBatchForView(null)}
+          batch={selectedBatchForView}
+          allVisas={individualVisas}
+          allCandidates={candidates}
+          onEdit={(batch) => {
+            setSelectedBatchForView(null);
+            setEditingVisaBatch(batch);
+            setIsReceiveBatchOpen(true);
+          }}
+          onDelete={(batch) => {
+            setSelectedBatchForView(null);
+            setBatchDeleteTarget(batch);
+          }}
+          onAssignVisa={(visa) => {
+            setSelectedBatchForView(null);
+            setSelectedVisaForAssignment(visa);
+            setIsAssignCandidateOpen(true);
+          }}
+          onUnassignVisa={(visa) => {
+            handleUnassignVisa(visa);
+          }}
+          onSelectCandidateDetail={onSelectCandidateDetail}
+        />
+      )}
 
       {/* 6. Delete Visa Batch Modal */}
-      <DeleteVisaBatchModal
-        isOpen={!!batchDeleteTarget}
-        onClose={() => setBatchDeleteTarget(null)}
-        batch={batchDeleteTarget}
-        allVisas={individualVisas}
-        onDeleted={() => {
-          setBatchDeleteTarget(null);
-          loadData();
-        }}
-      />
+      {batchDeleteTarget && (
+        <DeleteVisaBatchModal
+          isOpen={true}
+          onClose={() => setBatchDeleteTarget(null)}
+          batch={batchDeleteTarget}
+          allVisas={individualVisas}
+          onDeleted={() => {
+            setBatchDeleteTarget(null);
+            loadData();
+          }}
+        />
+      )}
 
       {/* Fetch & Update Payment Modal */}
       <FetchUpdatePaymentModal

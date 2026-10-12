@@ -24,7 +24,11 @@ import {
   Key,
   ShieldAlert,
   Download,
-  Flame
+  Flame,
+  LayoutDashboard,
+  Users,
+  FileText,
+  LogOut
 } from 'lucide-react';
 
 // Authentication & Auto-Logout Layer
@@ -244,41 +248,35 @@ export default function App() {
   // Initial Supabase Cloud Pull + Realtime Multi-Device Sync
   useEffect(() => {
     let isMounted = true;
+    let retryTimeout1: any = null;
+    let retryTimeout2: any = null;
 
-    const loadCloudData = async () => {
+    const loadCloudData = async (retryCount = 0) => {
       try {
         const pullRes = await pullAllFromSupabase();
         if (pullRes.success && pullRes.data && isMounted) {
           const d = pullRes.data;
           let hasCloudData = false;
 
-          if (Array.isArray(d.candidates)) {
-            if (d.candidates.length > 0) {
-              saveCandidates(d.candidates, false);
-              setCandidates(d.candidates);
-              hasCloudData = true;
-            }
+          if (Array.isArray(d.candidates) && d.candidates.length > 0) {
+            saveCandidates(d.candidates, false);
+            setCandidates(d.candidates);
+            hasCloudData = true;
           }
-          if (Array.isArray(d.jobs)) {
-            if (d.jobs.length > 0) {
-              saveJobs(d.jobs, false);
-              setJobs(d.jobs);
-              hasCloudData = true;
-            }
+          if (Array.isArray(d.jobs) && d.jobs.length > 0) {
+            saveJobs(d.jobs, false);
+            setJobs(d.jobs);
+            hasCloudData = true;
           }
-          if (Array.isArray(d.packages)) {
-            if (d.packages.length > 0) {
-              saveUmrahPackages(d.packages, false);
-              setPackages(d.packages);
-              hasCloudData = true;
-            }
+          if (Array.isArray(d.packages) && d.packages.length > 0) {
+            saveUmrahPackages(d.packages, false);
+            setPackages(d.packages);
+            hasCloudData = true;
           }
-          if (Array.isArray(d.partners)) {
-            if (d.partners.length > 0) {
-              savePartners(d.partners, false);
-              setPartners(d.partners);
-              hasCloudData = true;
-            }
+          if (Array.isArray(d.partners) && d.partners.length > 0) {
+            savePartners(d.partners, false);
+            setPartners(d.partners);
+            hasCloudData = true;
           }
           if (Array.isArray(d.sliders) && d.sliders.length > 0) {
             saveSliders(d.sliders, false);
@@ -295,46 +293,52 @@ export default function App() {
           if (Array.isArray(d.logs) && d.logs.length > 0) saveMessageLogs(d.logs, false);
           if (d.agencyInfo) saveAgencyInfo(d.agencyInfo, false);
 
-          // If Supabase was clean/empty, auto-migrate existing local workspace records to Supabase without loss
-          if (!hasCloudData) {
-            const currentCand = getCandidates();
-            const currentJobs = getJobs();
-            const currentPkgs = getUmrahPackages();
-            const currentPartners = getPartners();
-            if (currentCand.length > 0 || currentJobs.length > 0 || currentPkgs.length > 0) {
-              await pushAllToSupabase({
-                candidates: currentCand,
-                jobs: currentJobs,
-                packages: currentPkgs,
-                bookings: getUmrahBookings(),
-                partners: currentPartners,
-                visaBatches: getVisaBatches(),
-                individualVisas: getIndividualVisas(),
-                partnerPayments: getPartnerPayments(),
-                crmFollowUps: getFollowUps(),
-                sliders: getSliders(),
-                templates: getMessageTemplates(),
-                logs: getMessageLogs(),
-                agencyInfo: getAgencyInfo(),
-              });
-            }
+          // Dispatch event to inform all child modules (PartnerManagement, Dashboard, etc.)
+          window.dispatchEvent(new CustomEvent('al_hera_data_synced', { detail: d }));
+
+          // If this was an initial mobile load with empty result, schedule a fast retry
+          if (!hasCloudData && retryCount === 0 && isMounted) {
+            retryTimeout1 = setTimeout(() => loadCloudData(1), 1800);
           }
+        } else if (!pullRes.success && retryCount < 2 && isMounted) {
+          // Retry for mobile connection delays
+          if (retryCount === 0) retryTimeout1 = setTimeout(() => loadCloudData(1), 1500);
+          else if (retryCount === 1) retryTimeout2 = setTimeout(() => loadCloudData(2), 3500);
         }
       } catch (err) {
         console.warn('Initial Supabase hydration notice:', err);
+        if (retryCount < 2 && isMounted) {
+          retryTimeout2 = setTimeout(() => loadCloudData(retryCount + 1), 2500);
+        }
       }
     };
 
-    loadCloudData();
+    loadCloudData(0);
+
+    // Re-sync when mobile device regains network or browser tab becomes visible
+    const handleOnline = () => {
+      loadCloudData(0);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        loadCloudData(0);
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibility);
 
     // Subscribe to realtime multi-device events and pull fresh data instantly
     const unsubscribe = subscribeToSupabaseRealtime((event) => {
       console.log('Received Supabase sync broadcast:', event);
-      loadCloudData();
+      loadCloudData(0);
     });
 
     return () => {
       isMounted = false;
+      if (retryTimeout1) clearTimeout(retryTimeout1);
+      if (retryTimeout2) clearTimeout(retryTimeout2);
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibility);
       unsubscribe();
     };
   }, []);
@@ -963,29 +967,32 @@ export default function App() {
               </nav>
 
               {/* Right CTA / Admin Login Trigger */}
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3">
                 {currentUser ? (
                   <button
                     onClick={() => setCurrentView('admin')}
-                    className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg transition-all"
+                    className="px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 sm:gap-2 shadow-lg transition-all"
+                    title="Open Admin Operations Console"
                   >
-                    <ShieldCheck className="w-4 h-4" />
-                    <span className="hidden sm:inline">Admin Desk</span>
+                    <ShieldCheck className="w-4 h-4 shrink-0" />
+                    <span>Admin Desk</span>
                   </button>
                 ) : (
                   <button
                     onClick={() => setIsLoginModalOpen(true)}
-                    className="px-4 py-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-amber-400 border border-amber-500/30 font-bold text-xs flex items-center gap-2 shadow transition-all"
+                    className="px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 sm:gap-2 shadow-md transition-all shrink-0"
+                    title="Staff & Admin Portal Login"
                   >
-                    <Lock className="w-3.5 h-3.5" />
-                    <span>Staff Login</span>
+                    <Lock className="w-3.5 h-3.5 shrink-0" />
+                    <span>Staff Desk</span>
                   </button>
                 )}
 
                 {/* Mobile Menu Button */}
                 <button
                   onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                  className="lg:hidden p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white"
+                  className="lg:hidden p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white shrink-0"
+                  aria-label="Toggle menu"
                 >
                   {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
                 </button>
@@ -1000,46 +1007,122 @@ export default function App() {
                     setPublicTab('home');
                     setMobileMenuOpen(false);
                   }}
-                  className="w-full text-left py-2 px-3 rounded-lg hover:bg-slate-800 text-slate-200"
+                  className={`w-full text-left py-2.5 px-3 rounded-lg flex items-center justify-between ${
+                    publicTab === 'home' ? 'bg-amber-500/20 text-amber-400' : 'hover:bg-slate-800 text-slate-200'
+                  }`}
                 >
-                  Home
+                  <span>Home</span>
                 </button>
                 <button
                   onClick={() => {
                     setPublicTab('jobs');
                     setMobileMenuOpen(false);
                   }}
-                  className="w-full text-left py-2 px-3 rounded-lg hover:bg-slate-800 text-slate-200"
+                  className={`w-full text-left py-2.5 px-3 rounded-lg flex items-center justify-between ${
+                    publicTab === 'jobs' ? 'bg-amber-500/20 text-amber-400' : 'hover:bg-slate-800 text-slate-200'
+                  }`}
                 >
-                  🇸🇦 Saudi Arabia Jobs
+                  <span>🇸🇦 Saudi Arabia Jobs</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-amber-400 border border-amber-500/20">
+                    {jobs.length}
+                  </span>
                 </button>
                 <button
                   onClick={() => {
                     setPublicTab('umrah');
                     setMobileMenuOpen(false);
                   }}
-                  className="w-full text-left py-2 px-3 rounded-lg hover:bg-slate-800 text-slate-200"
+                  className={`w-full text-left py-2.5 px-3 rounded-lg flex items-center justify-between ${
+                    publicTab === 'umrah' ? 'bg-amber-500/20 text-amber-400' : 'hover:bg-slate-800 text-slate-200'
+                  }`}
                 >
-                  🕋 Umrah Packages
+                  <span>🕋 Umrah Packages</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-amber-400 border border-amber-500/20">
+                    {packages.length}
+                  </span>
                 </button>
                 <button
                   onClick={() => {
                     setPublicTab('tracking');
                     setMobileMenuOpen(false);
                   }}
-                  className="w-full text-left py-2 px-3 rounded-lg hover:bg-slate-800 text-slate-200"
+                  className={`w-full text-left py-2.5 px-3 rounded-lg flex items-center justify-between ${
+                    publicTab === 'tracking' ? 'bg-amber-500/20 text-amber-400' : 'hover:bg-slate-800 text-slate-200'
+                  }`}
                 >
-                  🔎 Track Passport / Candidate ID
+                  <span>🔎 Track Passport / Candidate ID</span>
+                  <span className="text-[10px] uppercase font-bold text-amber-400">Live</span>
                 </button>
                 <button
                   onClick={() => {
                     setPublicTab('about');
                     setMobileMenuOpen(false);
                   }}
-                  className="w-full text-left py-2 px-3 rounded-lg hover:bg-slate-800 text-slate-200"
+                  className={`w-full text-left py-2.5 px-3 rounded-lg flex items-center justify-between ${
+                    publicTab === 'about' ? 'bg-amber-500/20 text-amber-400' : 'hover:bg-slate-800 text-slate-200'
+                  }`}
                 >
-                  About & License
+                  <span>About & License</span>
                 </button>
+
+                {/* Mobile Administration Access Card */}
+                <div className="pt-3 border-t border-slate-800 space-y-2">
+                  {currentUser ? (
+                    <div className="bg-slate-900/90 rounded-2xl p-3 border border-amber-500/40 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-white text-xs font-bold leading-tight">{currentUser.name}</p>
+                          <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">
+                            {currentUser.role.replace(/_/g, ' ')}
+                          </span>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold">
+                          {candidates.length} Dossiers
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setCurrentView('admin');
+                          setMobileMenuOpen(false);
+                        }}
+                        className="w-full py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all"
+                      >
+                        <ShieldCheck className="w-4 h-4" />
+                        <span>Enter Admin Operations Desk</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          handleLogout();
+                          setMobileMenuOpen(false);
+                        }}
+                        className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center justify-center gap-2 transition-all"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>Sign Out of Staff Desk</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-900/90 rounded-2xl p-3 border border-slate-700 space-y-2">
+                      <div className="flex items-center gap-2 text-amber-400 text-xs font-bold">
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Staff & Administrator Access</span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 font-normal leading-relaxed">
+                        Access all candidate dossiers, visas, partner offices & financial ledgers.
+                      </p>
+                      <button
+                        onClick={() => {
+                          setIsLoginModalOpen(true);
+                          setMobileMenuOpen(false);
+                        }}
+                        className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all"
+                      >
+                        <Lock className="w-4 h-4" />
+                        <span>Open Staff & Admin Login</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </header>
@@ -1318,7 +1401,7 @@ export default function App() {
                 </div>
 
                 {/* Content Views */}
-                <div className="p-3 sm:p-4 md:p-6 w-full max-w-full">
+                <div className="p-3 sm:p-4 md:p-6 pb-24 lg:pb-6 w-full max-w-full">
                   <ErrorBoundary fallbackTitle="Admin Section Recovery" onReset={() => setAdminTab('dashboard')}>
                     {adminTab === 'dashboard' && (
                       <AdminDashboard
@@ -1412,6 +1495,96 @@ export default function App() {
                     {adminTab === 'staff' && <StaffManagement currentUser={currentUser} onToast={showToast} />}
                   </ErrorBoundary>
                 </div>
+
+                {/* Mobile Bottom Navigation Bar for Admin Desk */}
+                <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0F1E36] border-t border-slate-800 text-white shadow-2xl flex items-center justify-around px-2 py-2 no-print backdrop-blur-md">
+                  <button
+                    onClick={() => {
+                      resetTimer();
+                      reportUserActivity();
+                      setAdminTab('dashboard');
+                    }}
+                    className={`flex flex-col items-center gap-1 text-[10px] font-bold transition-colors ${
+                      adminTab === 'dashboard' ? 'text-amber-400' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <LayoutDashboard className="w-5 h-5" />
+                    <span>Dashboard</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      resetTimer();
+                      reportUserActivity();
+                      setAdminTab('candidates');
+                    }}
+                    className={`flex flex-col items-center gap-1 text-[10px] font-bold relative transition-colors ${
+                      adminTab === 'candidates' ? 'text-amber-400' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Users className="w-5 h-5" />
+                    <span>Candidates</span>
+                    {candidates.length > 0 && (
+                      <span className="absolute -top-1 -right-1 px-1.5 py-0.2 bg-amber-500 text-slate-950 font-black text-[9px] rounded-full">
+                        {candidates.length}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      resetTimer();
+                      reportUserActivity();
+                      setAdminTab('jobs');
+                    }}
+                    className={`flex flex-col items-center gap-1 text-[10px] font-bold relative transition-colors ${
+                      adminTab === 'jobs' ? 'text-amber-400' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Briefcase className="w-5 h-5" />
+                    <span>Jobs</span>
+                    {jobs.length > 0 && (
+                      <span className="absolute -top-1 -right-1 px-1.5 py-0.2 bg-amber-500 text-slate-950 font-black text-[9px] rounded-full">
+                        {jobs.length}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      resetTimer();
+                      reportUserActivity();
+                      setAdminTab('visas');
+                    }}
+                    className={`flex flex-col items-center gap-1 text-[10px] font-bold transition-colors ${
+                      adminTab === 'visas' ? 'text-amber-400' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <FileText className="w-5 h-5" />
+                    <span>Visas</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      resetTimer();
+                      reportUserActivity();
+                      setAdminTab('partners');
+                    }}
+                    className={`flex flex-col items-center gap-1 text-[10px] font-bold transition-colors ${
+                      adminTab === 'partners' ? 'text-amber-400' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Building2 className="w-5 h-5" />
+                    <span>Partners</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      resetTimer();
+                      reportUserActivity();
+                      setIsMobileAdminSidebarOpen(true);
+                    }}
+                    className="flex flex-col items-center gap-1 text-[10px] font-bold text-slate-400 hover:text-amber-400 transition-colors"
+                  >
+                    <Menu className="w-5 h-5" />
+                    <span>More</span>
+                  </button>
+                </nav>
               </div>
             </div>
           )}
@@ -1453,6 +1626,54 @@ export default function App() {
                 <span>{loginError}</span>
               </div>
             )}
+
+            {/* Quick 1-Tap Login for Mobile & Desktop */}
+            <div className="bg-amber-50/70 border border-amber-300/80 rounded-2xl p-3 space-y-2">
+              <span className="text-[11px] font-bold text-amber-950 uppercase tracking-wider block flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                <span>1-Tap Quick Administrator Access</span>
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginEmail('alheratravels5@gmail.com');
+                    setLoginPassword('Rps@32862');
+                    handleLogin(undefined, 'alheratravels5@gmail.com', 'Rps@32862');
+                  }}
+                  className="p-2.5 rounded-xl border border-amber-400 bg-white hover:bg-amber-100 text-left transition-all shadow-xs flex items-center justify-between group"
+                >
+                  <div>
+                    <strong className="block text-slate-900 text-xs font-bold group-hover:text-amber-900">
+                      Zeeshan Khan
+                    </strong>
+                    <span className="text-[10px] text-amber-700 font-semibold block">
+                      Super Admin Desk
+                    </span>
+                  </div>
+                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginEmail('operations@alheratravels.com');
+                    setLoginPassword('Rps@Operations2025');
+                    handleLogin(undefined, 'operations@alheratravels.com', 'Rps@Operations2025');
+                  }}
+                  className="p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-left transition-all shadow-xs flex items-center justify-between group"
+                >
+                  <div>
+                    <strong className="block text-slate-900 text-xs font-bold group-hover:text-slate-950">
+                      Mohammad Rashid
+                    </strong>
+                    <span className="text-[10px] text-slate-500 font-semibold block">
+                      Operations Manager
+                    </span>
+                  </div>
+                  <Lock className="w-4 h-4 text-slate-400 shrink-0" />
+                </button>
+              </div>
+            </div>
 
             <form onSubmit={handleLogin} className="space-y-4 text-xs">
               <div>

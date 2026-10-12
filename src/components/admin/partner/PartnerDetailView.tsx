@@ -1994,41 +1994,45 @@ export const PartnerDetailView: React.FC<PartnerDetailViewProps> = ({
       )}
 
       {/* View Visa Batch Modal */}
-      <ViewVisaBatchModal
-        isOpen={!!selectedBatchForView}
-        onClose={() => setSelectedBatchForView(null)}
-        batch={selectedBatchForView}
-        allVisas={allVisas}
-        allCandidates={allCandidates}
-        onEdit={(batch) => {
-          setSelectedBatchForView(null);
-          onOpenEditBatch?.(batch);
-        }}
-        onDelete={(batch) => {
-          setSelectedBatchForView(null);
-          setBatchDeleteTarget(batch);
-        }}
-        onAssignVisa={(visa) => {
-          setSelectedBatchForView(null);
-          onOpenAssignCandidate(visa);
-        }}
-        onUnassignVisa={(visa) => {
-          handleUnassignCandidate(visa);
-        }}
-        onSelectCandidateDetail={onSelectCandidateDetail}
-      />
+      {selectedBatchForView && (
+        <ViewVisaBatchModal
+          isOpen={true}
+          onClose={() => setSelectedBatchForView(null)}
+          batch={selectedBatchForView}
+          allVisas={allVisas}
+          allCandidates={allCandidates}
+          onEdit={(batch) => {
+            setSelectedBatchForView(null);
+            onOpenEditBatch?.(batch);
+          }}
+          onDelete={(batch) => {
+            setSelectedBatchForView(null);
+            setBatchDeleteTarget(batch);
+          }}
+          onAssignVisa={(visa) => {
+            setSelectedBatchForView(null);
+            onOpenAssignCandidate(visa);
+          }}
+          onUnassignVisa={(visa) => {
+            handleUnassignCandidate(visa);
+          }}
+          onSelectCandidateDetail={onSelectCandidateDetail}
+        />
+      )}
 
       {/* Delete Visa Batch Modal */}
-      <DeleteVisaBatchModal
-        isOpen={!!batchDeleteTarget}
-        onClose={() => setBatchDeleteTarget(null)}
-        batch={batchDeleteTarget}
-        allVisas={allVisas}
-        onDeleted={() => {
-          setBatchDeleteTarget(null);
-          onRefreshData?.();
-        }}
-      />
+      {batchDeleteTarget && (
+        <DeleteVisaBatchModal
+          isOpen={true}
+          onClose={() => setBatchDeleteTarget(null)}
+          batch={batchDeleteTarget}
+          allVisas={allVisas}
+          onDeleted={() => {
+            setBatchDeleteTarget(null);
+            onRefreshData?.();
+          }}
+        />
+      )}
 
       {/* Fetch & Update Payment Modal */}
       <FetchUpdatePaymentModal

@@ -20,10 +20,13 @@ import {
   ChevronDown,
   Loader2,
   X,
-  Layers
+  Layers,
+  UserX,
+  LayoutGrid,
+  Table as TableIcon
 } from 'lucide-react';
 import { Candidate, CandidateStatus, PartnerOffice, AgencyInfo, POPULAR_SELECTION_CITIES } from '../../types';
-import { getAgencyInfo } from '../../lib/storage';
+import { getAgencyInfo, unlinkCandidateFromVisa } from '../../lib/storage';
 import { generateSelectionLetterPdf } from '../../lib/pdfGenerator';
 import { WakalaCardModal } from './WakalaCardModal';
 
@@ -72,6 +75,7 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
   const [partnerFilter, setPartnerFilter] = useState<string>('all');
   const [cityFilter, setCityFilter] = useState<string>('all');
   const [selectedCandidateForWakala, setSelectedCandidateForWakala] = useState<Candidate | null>(null);
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('table');
 
   // Multi-selection state for bulk actions
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
@@ -265,6 +269,33 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
     document.body.removeChild(link);
   };
 
+  const handleUnassignCandidateFromVisa = (cand: Candidate) => {
+    if (
+      !confirm(
+        `Are you sure you want to unassign ${cand.fullName} (${cand.trackingId}) from their Saudi visa (${cand.visaId || 'allotted'})? The visa will return to Available inventory and job opening quota will be restored.`
+      )
+    ) {
+      return;
+    }
+    const res = unlinkCandidateFromVisa(cand.id);
+    if (res.success) {
+      if (onUpdateCandidate) {
+        onUpdateCandidate({
+          ...cand,
+          visaId: undefined,
+          visaBatchId: undefined,
+          partnerOfficeId: undefined,
+          partnerOfficeName: undefined,
+          visaAmount: 0,
+          alHeraCommission: 0,
+          partnerPayableAmount: 0,
+        });
+      }
+    } else {
+      alert(res.message);
+    }
+  };
+
   const getStatusBadge = (status: CandidateStatus) => {
     const colors: Record<string, string> = {
       applied: 'bg-slate-100 text-slate-800 border-slate-200',
@@ -315,6 +346,32 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
               <span>Bulk Change Status ({selectedCandidateIds.size})</span>
             </button>
           )}
+
+          {/* View Mode Toggle (Table / Responsive Cards) */}
+          <div className="flex items-center rounded-xl border border-slate-300 bg-white p-0.5 shadow-xs">
+            <button
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                viewMode === 'table' ? 'bg-[#0F1E36] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Table View (Full Columns)"
+            >
+              <TableIcon className="w-3.5 h-3.5" />
+              <span>Table</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('cards')}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                viewMode === 'cards' ? 'bg-[#0F1E36] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Card View (Mobile & Tablet Friendly)"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Cards</span>
+            </button>
+          </div>
 
           <button
             onClick={handleExportCSV}
@@ -476,203 +533,383 @@ export const CandidateManagement: React.FC<CandidateManagementProps> = ({
         </div>
       )}
 
-      {/* Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-[#0F1E36] text-white font-bold uppercase text-[10px] tracking-wider">
-              <tr>
-                <th className="py-3.5 px-3 w-10 text-center">
-                  <button
-                    type="button"
-                    onClick={handleToggleSelectAll}
-                    className="flex items-center justify-center p-1 rounded hover:bg-white/10"
-                    title={isAllFilteredSelected ? 'Deselect all visible' : 'Select all visible'}
-                  >
-                    {isAllFilteredSelected ? (
-                      <CheckSquare className="w-4 h-4 text-amber-400" />
-                    ) : (
-                      <Square className="w-4 h-4 text-slate-400" />
-                    )}
-                  </button>
-                </th>
-                <th className="py-3.5 px-3">Tracking ID</th>
-                <th className="py-3.5 px-4">Candidate & Passport</th>
-                <th className="py-3.5 px-4">Trade / Profession</th>
-                <th className="py-3.5 px-4">Saudi Sponsor</th>
-                <th className="py-3.5 px-4 min-w-[200px]">Current Status (Immediate Save)</th>
-                <th className="py-3.5 px-4">Financials (INR)</th>
-                <th className="py-3.5 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {filteredCandidates.length > 0 ? (
-                filteredCandidates.map((c) => {
-                  const isSelected = selectedCandidateIds.has(c.id);
-                  const isRowUpdating = updatingCandidateId === c.id;
-                  const isJustUpdated = justUpdatedCandidateId === c.id;
+      {/* Candidate Display: Mobile Cards View vs Full Table */}
+      {viewMode === 'cards' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredCandidates.length > 0 ? (
+            filteredCandidates.map((c) => {
+              const isSelected = selectedCandidateIds.has(c.id);
+              const isRowUpdating = updatingCandidateId === c.id;
+              const isJustUpdated = justUpdatedCandidateId === c.id;
 
-                  return (
-                    <tr
-                      key={c.id}
-                      onClick={() => onViewCandidate(c)}
-                      className={`hover:bg-amber-50/40 cursor-pointer transition-colors ${
-                        isSelected ? 'bg-indigo-50/60' : ''
-                      } ${isJustUpdated ? 'bg-emerald-50 ring-2 ring-emerald-500/80 transition-all duration-700' : ''}`}
-                    >
-                      <td
-                        className="py-3.5 px-3 text-center"
-                        onClick={(e) => handleToggleSelectCandidate(c.id, e)}
-                      >
-                        <button
-                          type="button"
-                          className="flex items-center justify-center p-1 rounded hover:bg-indigo-100/60"
-                        >
-                          {isSelected ? (
-                            <CheckSquare className="w-4 h-4 text-indigo-600" />
-                          ) : (
-                            <Square className="w-4 h-4 text-slate-400" />
-                          )}
-                        </button>
-                      </td>
-                      <td className="py-3.5 px-3 font-mono font-bold text-amber-900 whitespace-nowrap">
+              return (
+                <div
+                  key={c.id}
+                  onClick={() => onViewCandidate(c)}
+                  className={`bg-white rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all flex flex-col justify-between cursor-pointer space-y-3.5 ${
+                    isSelected ? 'border-indigo-400 bg-indigo-50/40 ring-2 ring-indigo-300' : 'border-slate-200 hover:border-amber-300'
+                  } ${isJustUpdated ? 'ring-2 ring-emerald-500 bg-emerald-50/50' : ''}`}
+                >
+                  {/* Card Header: Checkbox, Tracking ID, Status */}
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                    <div className="flex items-center gap-2" onClick={(e) => handleToggleSelectCandidate(c.id, e)}>
+                      <button type="button" className="p-1 rounded hover:bg-slate-100 text-slate-400">
+                        {isSelected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4 text-slate-300" />}
+                      </button>
+                      <span className="font-mono font-bold text-amber-900 text-xs bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
                         {c.trackingId}
-                      </td>
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        <strong className="font-bold text-slate-900 block">{c.fullName}</strong>
-                        <span className="font-mono text-[11px] text-slate-500 uppercase">
-                          PP: {c.passportNumber} • DOB: {c.dateOfBirth || 'N/A'} • {c.phoneNumber}
-                        </span>
-                        {c.selectionCity && (
-                          <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold">
-                            <MapPin className="w-2.5 h-2.5 text-indigo-600" />
-                            <span>Selected in: {c.selectionCity}</span>
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        <span className="font-semibold text-slate-800">{c.trade}</span>
-                        <span className="text-[10px] text-slate-400 block">{c.experienceYears} Yrs Exp.</span>
-                      </td>
-                      <td className="py-3.5 px-4 whitespace-nowrap text-slate-700 max-w-[150px] truncate">
-                        {c.sponsorName || 'Direct Selection'}
-                      </td>
-                      <td
-                        className="py-3.5 px-4 whitespace-nowrap"
-                        onClick={(e) => e.stopPropagation()}
+                      </span>
+                    </div>
+                    {getStatusBadge(c.status)}
+                  </div>
+
+                  {/* Candidate Identity */}
+                  <div className="space-y-1">
+                    <h3 className="font-bold text-sm text-[#0F1E36] leading-snug">{c.fullName}</h3>
+                    <div className="text-[11px] text-slate-500 font-mono space-y-0.5">
+                      <p>Passport: <strong className="text-slate-800">{c.passportNumber || 'N/A'}</strong> • DOB: {c.dateOfBirth || 'N/A'}</p>
+                      <p className="flex items-center gap-1"><Phone className="w-3 h-3 text-amber-600" /> {c.phoneNumber || 'N/A'}</p>
+                    </div>
+                    {c.selectionCity && (
+                      <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold mt-1">
+                        <MapPin className="w-2.5 h-2.5 text-indigo-600" />
+                        <span>Selected in: {c.selectionCity}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Trade & Sponsor */}
+                  <div className="bg-slate-50 rounded-xl p-2.5 text-xs grid grid-cols-2 gap-2 border border-slate-100">
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase font-semibold block">Trade</span>
+                      <strong className="text-slate-800 text-[11px] truncate block">{c.trade}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase font-semibold block">Sponsor</span>
+                      <span className="text-slate-700 text-[11px] truncate block">{c.sponsorName || 'Direct Selection'}</span>
+                    </div>
+                  </div>
+
+                  {/* Financial Mini Bar */}
+                  <div className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-xl bg-amber-50/60 border border-amber-200/60">
+                    <div>
+                      <span className="text-[10px] text-slate-500 block">Total Fee</span>
+                      <strong className="text-slate-900 font-mono text-[11px]">₹{(Number(c.packageFee) || 0).toLocaleString('en-IN')}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-emerald-700 font-semibold block">Paid</span>
+                      <strong className="text-emerald-700 font-mono text-[11px]">₹{(Number(c.totalPaid) || 0).toLocaleString('en-IN')}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-rose-600 font-semibold block">Balance</span>
+                      <strong className="text-rose-600 font-mono text-[11px]">₹{(Number(c.balanceDue) || 0).toLocaleString('en-IN')}</strong>
+                    </div>
+                  </div>
+
+                  {/* Status Dropdown */}
+                  <div onClick={(e) => e.stopPropagation()} className="pt-1">
+                    {isRowUpdating ? (
+                      <div className="flex items-center justify-center gap-1.5 p-2 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs font-bold">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                        <span>Saving to Supabase...</span>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <select
+                          value={c.status}
+                          onChange={(e) => handleQuickStatusChange(c, e.target.value as CandidateStatus, e)}
+                          className={`w-full appearance-none pr-8 pl-3 py-2 text-xs font-bold rounded-xl border bg-white focus:outline-none cursor-pointer transition-colors text-slate-800 shadow-2xs ${
+                            isJustUpdated
+                              ? 'border-emerald-500 ring-2 ring-emerald-400 bg-emerald-50 text-emerald-950'
+                              : 'border-slate-300 hover:border-amber-500'
+                          }`}
+                        >
+                          {STATUS_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Card Actions */}
+                  <div
+                    className="flex items-center justify-between pt-2 border-t border-slate-100"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={() => onViewCandidate(c)}
+                      className="px-3 py-1.5 rounded-lg bg-[#0F1E36] hover:bg-[#1A3258] text-white text-xs font-bold flex items-center gap-1.5 transition-all"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>View Dossier</span>
+                    </button>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => generateSelectionLetterPdf(c, agency)}
+                        className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800"
+                        title="Selection Letter PDF"
                       >
-                        <div className="flex items-center gap-2">
-                          {isRowUpdating ? (
-                            <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 border border-amber-300 rounded-lg text-amber-900 font-bold text-[11px]">
-                              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
-                              <span>Saving to Supabase...</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5">
-                              <div className="relative inline-block">
-                                <select
-                                  value={c.status}
-                                  onChange={(e) => handleQuickStatusChange(c, e.target.value as CandidateStatus, e)}
-                                  className={`appearance-none pr-7 pl-2.5 py-1 text-[11px] font-bold rounded-lg border bg-white focus:outline-none cursor-pointer transition-colors text-slate-800 shadow-2xs ${
-                                    isJustUpdated
-                                      ? 'border-emerald-500 ring-2 ring-emerald-400 bg-emerald-50/50 text-emerald-950'
-                                      : 'border-slate-300 hover:border-amber-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500'
-                                  }`}
-                                  title="Change status stage immediately in Supabase"
-                                >
-                                  {STATUS_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                      {opt.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                              </div>
-                              {isJustUpdated && (
-                                <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-bold bg-emerald-100 px-2 py-0.5 rounded-md whitespace-nowrap">
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                  Saved!
-                                </span>
-                              )}
+                        <Download className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setSelectedCandidateForWakala(c)}
+                        className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-800"
+                        title="Wakala Badge"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                      </button>
+                      {c.visaId && (
+                        <button
+                          onClick={() => handleUnassignCandidateFromVisa(c)}
+                          className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700"
+                          title="Unassign Visa"
+                        >
+                          <UserX className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => onEditCandidate(c)}
+                        className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
+                        title="Edit"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Delete candidate ${c.fullName} (${c.trackingId})?`)) {
+                            onDeleteCandidate(c.id);
+                          }
+                        }}
+                        className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="col-span-full bg-white rounded-2xl p-8 text-center text-slate-500 border border-slate-200">
+              No candidates found matching your filter criteria.
+            </div>
+          )}
+        </div>
+      ) : (
+        /* Full Table View */
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[#0F1E36] text-white font-bold uppercase text-[10px] tracking-wider">
+                <tr>
+                  <th className="py-3.5 px-3 w-10 text-center">
+                    <button
+                      type="button"
+                      onClick={handleToggleSelectAll}
+                      className="flex items-center justify-center p-1 rounded hover:bg-white/10"
+                      title={isAllFilteredSelected ? 'Deselect all visible' : 'Select all visible'}
+                    >
+                      {isAllFilteredSelected ? (
+                        <CheckSquare className="w-4 h-4 text-amber-400" />
+                      ) : (
+                        <Square className="w-4 h-4 text-slate-400" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="py-3.5 px-3">Tracking ID</th>
+                  <th className="py-3.5 px-4">Candidate & Passport</th>
+                  <th className="py-3.5 px-4">Trade / Profession</th>
+                  <th className="py-3.5 px-4">Saudi Sponsor</th>
+                  <th className="py-3.5 px-4 min-w-[200px]">Current Status (Immediate Save)</th>
+                  <th className="py-3.5 px-4">Financials (INR)</th>
+                  <th className="py-3.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {filteredCandidates.length > 0 ? (
+                  filteredCandidates.map((c) => {
+                    const isSelected = selectedCandidateIds.has(c.id);
+                    const isRowUpdating = updatingCandidateId === c.id;
+                    const isJustUpdated = justUpdatedCandidateId === c.id;
+
+                    return (
+                      <tr
+                        key={c.id}
+                        onClick={() => onViewCandidate(c)}
+                        className={`hover:bg-amber-50/40 cursor-pointer transition-colors ${
+                          isSelected ? 'bg-indigo-50/60' : ''
+                        } ${isJustUpdated ? 'bg-emerald-50 ring-2 ring-emerald-500/80 transition-all duration-700' : ''}`}
+                      >
+                        <td
+                          className="py-3.5 px-3 text-center"
+                          onClick={(e) => handleToggleSelectCandidate(c.id, e)}
+                        >
+                          <button
+                            type="button"
+                            className="flex items-center justify-center p-1 rounded hover:bg-indigo-100/60"
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="w-4 h-4 text-indigo-600" />
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-400" />
+                            )}
+                          </button>
+                        </td>
+                        <td className="py-3.5 px-3 font-mono font-bold text-amber-900 whitespace-nowrap">
+                          {c.trackingId}
+                        </td>
+                        <td className="py-3.5 px-4 whitespace-nowrap">
+                          <strong className="font-bold text-slate-900 block">{c.fullName}</strong>
+                          <span className="font-mono text-[11px] text-slate-500 uppercase">
+                            PP: {c.passportNumber} • DOB: {c.dateOfBirth || 'N/A'} • {c.phoneNumber}
+                          </span>
+                          {c.selectionCity && (
+                            <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold">
+                              <MapPin className="w-2.5 h-2.5 text-indigo-600" />
+                              <span>Selected in: {c.selectionCity}</span>
                             </div>
                           )}
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        <span className="text-slate-800 block">Total: ₹{(Number(c.packageFee) || 0).toLocaleString('en-IN')}</span>
-                        <span className="text-[11px] text-emerald-700 font-bold block">
-                          Paid: ₹{(Number(c.totalPaid) || 0).toLocaleString('en-IN')}
-                        </span>
-                        {(Number(c.balanceDue) || 0) > 0 && (
-                          <span className="text-[10px] text-rose-600 font-bold block">
-                            Due: ₹{(Number(c.balanceDue) || 0).toLocaleString('en-IN')}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        <div
-                          className="flex items-center justify-end gap-1.5"
+                        </td>
+                        <td className="py-3.5 px-4 whitespace-nowrap">
+                          <span className="font-semibold text-slate-800">{c.trade}</span>
+                          <span className="text-[10px] text-slate-400 block">{c.experienceYears} Yrs Exp.</span>
+                        </td>
+                        <td className="py-3.5 px-4 whitespace-nowrap text-slate-700 max-w-[150px] truncate">
+                          {c.sponsorName || 'Direct Selection'}
+                        </td>
+                        <td
+                          className="py-3.5 px-4 whitespace-nowrap"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <button
-                            onClick={() => onViewCandidate(c)}
-                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
-                            title="Open Dossier"
+                          <div className="flex items-center gap-2">
+                            {isRowUpdating ? (
+                              <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 border border-amber-300 rounded-lg text-amber-900 font-bold text-[11px]">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                                <span>Saving to Supabase...</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5">
+                                <div className="relative inline-block">
+                                  <select
+                                    value={c.status}
+                                    onChange={(e) => handleQuickStatusChange(c, e.target.value as CandidateStatus, e)}
+                                    className={`appearance-none pr-7 pl-2.5 py-1 text-[11px] font-bold rounded-lg border bg-white focus:outline-none cursor-pointer transition-colors text-slate-800 shadow-2xs ${
+                                      isJustUpdated
+                                        ? 'border-emerald-500 ring-2 ring-emerald-400 bg-emerald-50/50 text-emerald-950'
+                                        : 'border-slate-300 hover:border-amber-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500'
+                                    }`}
+                                    title="Change status stage immediately in Supabase"
+                                  >
+                                    {STATUS_OPTIONS.map((opt) => (
+                                      <option key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                </div>
+                                {isJustUpdated && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-bold bg-emerald-100 px-2 py-0.5 rounded-md whitespace-nowrap">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                    Saved!
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 whitespace-nowrap">
+                          <span className="text-slate-800 block">Total: ₹{(Number(c.packageFee) || 0).toLocaleString('en-IN')}</span>
+                          <span className="text-[11px] text-emerald-700 font-bold block">
+                            Paid: ₹{(Number(c.totalPaid) || 0).toLocaleString('en-IN')}
+                          </span>
+                          {(Number(c.balanceDue) || 0) > 0 && (
+                            <span className="text-[10px] text-rose-600 font-bold block">
+                              Due: ₹{(Number(c.balanceDue) || 0).toLocaleString('en-IN')}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                          <div
+                            className="flex items-center justify-end gap-1.5"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
+                            <button
+                              onClick={() => onViewCandidate(c)}
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
+                              title="Open Dossier"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
 
-                          <button
-                            onClick={() => generateSelectionLetterPdf(c, agency)}
-                            className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800"
-                            title="Download Selection Letter PDF"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                          </button>
+                            <button
+                              onClick={() => generateSelectionLetterPdf(c, agency)}
+                              className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800"
+                              title="Download Selection Letter PDF"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
 
-                          <button
-                            onClick={() => setSelectedCandidateForWakala(c)}
-                            className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-800"
-                            title="Wakala Identity Badge"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                          </button>
+                            <button
+                              onClick={() => setSelectedCandidateForWakala(c)}
+                              className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-800"
+                              title="Wakala Identity Badge"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
 
-                          <button
-                            onClick={() => onEditCandidate(c)}
-                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
-                            title="Edit Particulars"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
+                            {c.visaId && (
+                              <button
+                                onClick={() => handleUnassignCandidateFromVisa(c)}
+                                className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors"
+                                title={`Unassign candidate from Visa (${c.visaId})`}
+                              >
+                                <UserX className="w-3.5 h-3.5" />
+                              </button>
+                            )}
 
-                          <button
-                            onClick={() => {
-                              if (confirm(`Delete candidate ${c.fullName} (${c.trackingId})?`)) {
-                                onDeleteCandidate(c.id);
-                              }
-                            }}
-                            className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700"
-                            title="Delete Record"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : (
-                <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-500 italic">
-                    No candidates found matching your filter criteria.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                            <button
+                              onClick={() => onEditCandidate(c)}
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
+                              title="Edit Particulars"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                if (confirm(`Delete candidate ${c.fullName} (${c.trackingId})?`)) {
+                                  onDeleteCandidate(c.id);
+                                }
+                              }}
+                              className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700"
+                              title="Delete Record"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-slate-500 italic">
+                      No candidates found matching your filter criteria.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Bulk Status Update Modal */}
       {isBulkStatusModalOpen && (

@@ -27,7 +27,8 @@ import {
   FileCheck,
   Receipt,
   FileSignature,
-  Edit3
+  Edit3,
+  UserX
 } from 'lucide-react';
 import { Candidate, CandidateStatus, PaymentRecord, AgencyInfo, PartnerOfficePayment, PartnerOffice, POPULAR_SELECTION_CITIES } from '../../types';
 import {
@@ -36,7 +37,8 @@ import {
   getPartners,
   getCandidates,
   deleteCandidatePaymentRecord,
-  deletePartnerPaymentRecord
+  deletePartnerPaymentRecord,
+  unlinkCandidateFromVisa
 } from '../../lib/storage';
 import {
   generateSelectionLetterPdf,
@@ -223,6 +225,33 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
   }, [candidate]);
 
   if (!isOpen || !candidate) return null;
+
+  const handleUnassignFromVisa = () => {
+    if (!candidate) return;
+    if (
+      !confirm(
+        `Are you sure you want to unassign ${candidate.fullName} from Visa ${candidate.visaId || 'allotted'}? The visa will return to Available inventory and job opening quota will be restored.`
+      )
+    ) {
+      return;
+    }
+    const res = unlinkCandidateFromVisa(candidate.id);
+    if (res.success) {
+      alert(res.message);
+      onUpdateCandidate({
+        ...candidate,
+        visaId: undefined,
+        visaBatchId: undefined,
+        partnerOfficeId: undefined,
+        partnerOfficeName: undefined,
+        visaAmount: 0,
+        alHeraCommission: 0,
+        partnerPayableAmount: 0,
+      });
+    } else {
+      alert(res.message);
+    }
+  };
 
   const handleAdvanceStatus = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -897,18 +926,36 @@ export const CandidateDetailModal: React.FC<CandidateDetailModalProps> = ({
                   </span>
                 </div>
 
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between text-xs">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
                   <div>
-                    <span className="text-slate-500 text-[10px] uppercase font-bold block">Assigned Partner Office</span>
-                    <strong className="text-slate-900 font-semibold">
+                    <span className="text-slate-500 text-[10px] uppercase font-bold block">Assigned Partner Office & Visa</span>
+                    <strong className="text-slate-900 font-semibold block">
                       {partnerOffice ? partnerOffice.agencyName : (candidate.partnerOfficeId || 'Assigned Partner')}
                     </strong>
+                    {candidate.visaId && (
+                      <span className="text-[11px] font-mono text-amber-800 font-bold">
+                        Linked Visa: {candidate.visaId}
+                      </span>
+                    )}
                   </div>
-                  <div className="text-right">
-                    <span className="text-slate-500 text-[10px] uppercase font-bold block">Vouchers Recorded</span>
-                    <span className="font-mono font-bold text-slate-800">
-                      {candidatePartnerPayments.length} payment {candidatePartnerPayments.length === 1 ? 'record' : 'records'}
-                    </span>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <span className="text-slate-500 text-[10px] uppercase font-bold block">Vouchers Recorded</span>
+                      <span className="font-mono font-bold text-slate-800">
+                        {candidatePartnerPayments.length} payment {candidatePartnerPayments.length === 1 ? 'record' : 'records'}
+                      </span>
+                    </div>
+                    {(candidate.visaId || candidate.partnerOfficeId) && (
+                      <button
+                        type="button"
+                        onClick={handleUnassignFromVisa}
+                        className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                        title="Unassign candidate from this visa"
+                      >
+                        <UserX className="w-3.5 h-3.5" />
+                        <span>Unassign Candidate</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 

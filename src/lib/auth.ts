@@ -276,7 +276,7 @@ export function authenticateUser(emailInput: string, passwordInput: string): Aut
  * Automatically logs out the admin after 5 minutes (300 seconds) of inactivity.
  * Resets whenever the admin performs any action, moves/clicks on dashboard, or navigates.
  */
-export const DEFAULT_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 Minutes (300 Seconds)
+export const DEFAULT_INACTIVITY_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 Hours for multi-device operational persistence
 export const INACTIVITY_EXPIRED_MESSAGE = 'Your session expired due to inactivity. Please login again.';
 
 /**

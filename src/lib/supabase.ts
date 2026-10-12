@@ -311,23 +311,42 @@ export async function searchCandidateTrackingInSupabase(query: string): Promise<
   }
 
   try {
-    // 1. Direct search on PostgreSQL relational candidates table
+    // 1. Direct search on PostgreSQL relational candidates table with mobile-friendly normalized matching
+    const noSpaces = cleanQ.replace(/[\s\-_]+/g, '').toUpperCase();
+    const filterClauses = [
+      `tracking_id.ilike.%${cleanQ}%`,
+      `passport_number.ilike.%${cleanQ}%`,
+      `phone_number.ilike.%${cleanQ}%`,
+      `whatsapp_number.ilike.%${cleanQ}%`,
+      `mofa_number.ilike.%${cleanQ}%`,
+      `visa_number.ilike.%${cleanQ}%`
+    ];
+    if (noSpaces && noSpaces !== upperQ) {
+      filterClauses.push(`tracking_id.ilike.%${noSpaces}%`);
+      filterClauses.push(`passport_number.ilike.%${noSpaces}%`);
+    }
+
     const { data: directRows, error: directErr } = await supabase
       .from('candidates')
       .select('*')
-      .or(
-        `tracking_id.ilike.%${cleanQ}%,passport_number.ilike.%${cleanQ}%,phone_number.ilike.%${cleanQ}%,whatsapp_number.ilike.%${cleanQ}%,mofa_number.ilike.%${cleanQ}%,visa_number.ilike.%${cleanQ}%`
-      )
-      .limit(5);
+      .or(filterClauses.join(','))
+      .limit(10);
 
     if (!directErr && directRows && directRows.length > 0) {
-      // Find best match: exact tracking_id or passport_number preferred
+      // Find best match: exact tracking_id or passport_number preferred, with mobile space/hyphen tolerance
       const exactMatch =
-        directRows.find(
-          (r: any) =>
-            (r.tracking_id && r.tracking_id.toUpperCase() === upperQ) ||
-            (r.passport_number && r.passport_number.toUpperCase() === upperQ)
-        ) || directRows[0];
+        directRows.find((r: any) => {
+          const rowTr = (r.tracking_id || '').toUpperCase();
+          const rowPp = (r.passport_number || '').toUpperCase();
+          const rowTrClean = rowTr.replace(/[\s\-_]+/g, '');
+          const rowPpClean = rowPp.replace(/[\s\-_]+/g, '');
+          return (
+            rowTr === upperQ ||
+            rowPp === upperQ ||
+            rowTrClean === noSpaces ||
+            rowPpClean === noSpaces
+          );
+        }) || directRows[0];
 
       const mapped: Candidate = {
         id: exactMatch.id || 'cand-' + exactMatch.tracking_id,
@@ -400,9 +419,14 @@ export async function searchCandidateTrackingInSupabase(query: string): Promise<
         const ph = (c.phoneNumber || '').replace(/[^0-9]/g, '');
         const wh = (c.whatsappNumber || '').replace(/[^0-9]/g, '');
 
+        const trClean = tr.replace(/[\s\-_]+/g, '');
+        const psClean = ps.replace(/[\s\-_]+/g, '');
+
         return (
           tr === upperQ ||
           ps === upperQ ||
+          trClean === noSpaces ||
+          psClean === noSpaces ||
           mf === upperQ ||
           vs === upperQ ||
           (digitsOnly.length >= 5 && (ph.includes(digitsOnly) || wh.includes(digitsOnly)))
