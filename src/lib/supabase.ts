@@ -1919,6 +1919,7 @@ export async function pullAllFromSupabase(): Promise<{
     logs: MessageLog[];
     agencyInfo?: AgencyInfo;
   };
+  diagnostics?: any;
 }> {
   const supabase = getSupabase();
   if (!supabase) {
@@ -1936,6 +1937,33 @@ export async function pullAllFromSupabase(): Promise<{
       supabase.from('crm_follow_ups').select('*'),
       supabase.from('umrah_bookings').select('*'),
     ]);
+
+    const isStoreRejected = storeRes.status === 'rejected';
+    const isCandRejected = candRes.status === 'rejected';
+    const storeError = isStoreRejected
+      ? (storeRes as PromiseRejectedResult).reason?.message || String((storeRes as PromiseRejectedResult).reason)
+      : (storeRes as PromiseFulfilledResult<any>).value.error?.message;
+    const candError = isCandRejected
+      ? (candRes as PromiseRejectedResult).reason?.message || String((candRes as PromiseRejectedResult).reason)
+      : (candRes as PromiseFulfilledResult<any>).value.error?.message;
+
+    // Detect if mobile network/socket failed completely
+    const isNetworkError =
+      (isStoreRejected || (storeError && /fetch|network|timeout|connection|failed|offline/i.test(storeError))) &&
+      (isCandRejected || (candError && /fetch|network|timeout|connection|failed|offline/i.test(candError)));
+
+    if (isNetworkError) {
+      console.warn('Network failure during Supabase cloud pull:', { storeError, candError });
+      return {
+        success: false,
+        message: `Network error reaching Supabase cloud: ${storeError || candError || 'Failed to fetch'}. Please verify mobile internet connectivity.`,
+        diagnostics: {
+          isNetworkError: true,
+          storeError,
+          candError,
+        },
+      };
+    }
 
     const storeRows = (storeRes.status === 'fulfilled' && !storeRes.value.error && Array.isArray(storeRes.value.data))
       ? storeRes.value.data

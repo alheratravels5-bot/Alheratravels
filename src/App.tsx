@@ -28,7 +28,10 @@ import {
   LayoutDashboard,
   Users,
   FileText,
-  LogOut
+  LogOut,
+  Activity,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
 // Authentication & Auto-Logout Layer
@@ -125,6 +128,16 @@ import { SliderManagement } from './components/admin/SliderManagement';
 import { StaffManagement } from './components/admin/StaffManagement';
 import { SupabaseSyncModal } from './components/admin/SupabaseSyncModal';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { MobileDiagnosticsModal } from './components/common/MobileDiagnosticsModal';
+import {
+  isMobileBrowser,
+  getMobileEnvironmentInfo,
+  getNetworkState,
+  testLocalStorageAccess,
+  testSupabasePing,
+  logMobileCloud,
+  waitForNetworkReady
+} from './lib/mobileDiagnostics';
 
 export default function App() {
   // Navigation & Root Views
@@ -160,9 +173,13 @@ export default function App() {
   const [candidateToEdit, setCandidateToEdit] = useState<Candidate | null>(null);
   const [selectedCandidateDetail, setSelectedCandidateDetail] = useState<Candidate | null>(null);
 
-  // Cloud Sync Modal
+  // Cloud Sync & Mobile Diagnostics
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
   const [isMobileAdminSidebarOpen, setIsMobileAdminSidebarOpen] = useState(false);
+  const [isDiagnosticsModalOpen, setIsDiagnosticsModalOpen] = useState(false);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'waiting_network' | 'syncing' | 'synced' | 'failed' | 'retrying'>('idle');
+  const [cloudSyncMessage, setCloudSyncMessage] = useState<string>('Initializing multi-device cloud link...');
+  const [lastSyncTimestamp, setLastSyncTimestamp] = useState<string | null>(null);
 
   // Toast Notification
   const [toastMessage, setToastMessage] = useState<{ title: string; type: 'success' | 'info' | 'error' } | null>(null);
@@ -245,43 +262,143 @@ export default function App() {
     setSliders(getSliders());
   };
 
-  // Initial Supabase Cloud Pull + Realtime Multi-Device Sync
+  // Initial Supabase Cloud Pull + Realtime Multi-Device Sync with Mobile Hardening
   useEffect(() => {
     let isMounted = true;
     let retryTimeout1: any = null;
     let retryTimeout2: any = null;
+    let lastPullTime = 0;
 
     const loadCloudData = async (retryCount = 0) => {
+      const isMobile = isMobileBrowser();
+      const env = getMobileEnvironmentInfo();
+      const initialNet = getNetworkState();
+
+      logMobileCloud(
+        'HYDRATION',
+        `Starting cloud hydration attempt #${retryCount + 1} [Device: ${isMobile ? 'MOBILE' : 'DESKTOP'}]`,
+        'info',
+        {
+          isMobile,
+          platform: env.platform,
+          screen: env.screen,
+          onLine: initialNet.onLine,
+          effectiveType: initialNet.effectiveType,
+          rtt: initialNet.rtt,
+          downlink: initialNet.downlink,
+        }
+      );
+
+      // 1. Mobile LocalStorage Access & Integrity Check
+      const storageDiag = testLocalStorageAccess();
+      if (!storageDiag.ok) {
+        logMobileCloud(
+          'STORAGE',
+          `Mobile LocalStorage access error detected: ${storageDiag.error} (${storageDiag.errorName})`,
+          'error',
+          storageDiag
+        );
+      } else {
+        logMobileCloud('STORAGE', 'Mobile browser LocalStorage read/write verified', 'info');
+      }
+
+      // 2. Wait for Mobile Network Readiness before first attempt
+      if (retryCount === 0) {
+        setCloudSyncStatus('waiting_network');
+        setCloudSyncMessage('Waiting for mobile network stack to settle...');
+
+        try {
+          const netWait = await waitForNetworkReady({
+            maxWaitMs: 5000,
+            mobileStabilizationDelayMs: isMobile ? 400 : 50,
+          });
+
+          logMobileCloud(
+            'NETWORK',
+            `Network readiness settled in ${netWait.waitedMs}ms (wasOffline: ${netWait.wasOffline})`,
+            'info',
+            netWait.networkState
+          );
+        } catch (netErr) {
+          logMobileCloud('NETWORK', 'Network readiness wait encountered notice, proceeding with attempt', 'warn', netErr);
+        }
+      }
+
+      // 3. Measure and test Supabase connection
+      setCloudSyncStatus(retryCount === 0 ? 'syncing' : 'retrying');
+      setCloudSyncMessage(
+        retryCount === 0
+          ? 'Connecting to Supabase cloud...'
+          : `Re-attempting cloud pull (attempt #${retryCount + 1})...`
+      );
+
+      const pullStart = Date.now();
       try {
+        logMobileCloud('SUPABASE', `Executing pullAllFromSupabase query (attempt #${retryCount + 1})...`, 'info');
         const pullRes = await pullAllFromSupabase();
+        const pullDuration = Date.now() - pullStart;
+
         if (pullRes.success && pullRes.data && isMounted) {
           const d = pullRes.data;
           let hasCloudData = false;
 
-          if (Array.isArray(d.candidates) && d.candidates.length > 0) {
-            saveCandidates(d.candidates, false);
-            setCandidates(d.candidates);
-            hasCloudData = true;
+          const candCount = Array.isArray(d.candidates) ? d.candidates.length : 0;
+          const jobsCount = Array.isArray(d.jobs) ? d.jobs.length : 0;
+          const pkgsCount = Array.isArray(d.packages) ? d.packages.length : 0;
+          const partnersCount = Array.isArray(d.partners) ? d.partners.length : 0;
+
+          logMobileCloud(
+            'SUPABASE',
+            `Cloud data successfully received in ${pullDuration}ms (${candCount} candidates, ${jobsCount} jobs, ${pkgsCount} packages)`,
+            'success',
+            { candCount, jobsCount, pkgsCount, partnersCount, durationMs: pullDuration }
+          );
+
+          // Safely write each collection to storage with isolated try-catches for mobile quota
+          if (candCount > 0) {
+            try {
+              saveCandidates(d.candidates, false);
+              setCandidates(d.candidates);
+              hasCloudData = true;
+            } catch (sErr: any) {
+              logMobileCloud('STORAGE', `Failed writing candidates to local storage on mobile: ${sErr?.message}`, 'error', sErr);
+            }
           }
-          if (Array.isArray(d.jobs) && d.jobs.length > 0) {
-            saveJobs(d.jobs, false);
-            setJobs(d.jobs);
-            hasCloudData = true;
+          if (jobsCount > 0) {
+            try {
+              saveJobs(d.jobs, false);
+              setJobs(d.jobs);
+              hasCloudData = true;
+            } catch (sErr: any) {
+              logMobileCloud('STORAGE', `Failed writing jobs to local storage on mobile: ${sErr?.message}`, 'error', sErr);
+            }
           }
-          if (Array.isArray(d.packages) && d.packages.length > 0) {
-            saveUmrahPackages(d.packages, false);
-            setPackages(d.packages);
-            hasCloudData = true;
+          if (pkgsCount > 0) {
+            try {
+              saveUmrahPackages(d.packages, false);
+              setPackages(d.packages);
+              hasCloudData = true;
+            } catch (sErr: any) {
+              logMobileCloud('STORAGE', `Failed writing packages to local storage on mobile: ${sErr?.message}`, 'error', sErr);
+            }
           }
-          if (Array.isArray(d.partners) && d.partners.length > 0) {
-            savePartners(d.partners, false);
-            setPartners(d.partners);
-            hasCloudData = true;
+          if (partnersCount > 0) {
+            try {
+              savePartners(d.partners, false);
+              setPartners(d.partners);
+              hasCloudData = true;
+            } catch (sErr: any) {
+              logMobileCloud('STORAGE', `Failed writing partners to local storage on mobile: ${sErr?.message}`, 'error', sErr);
+            }
           }
           if (Array.isArray(d.sliders) && d.sliders.length > 0) {
-            saveSliders(d.sliders, false);
-            setSliders(d.sliders);
-            hasCloudData = true;
+            try {
+              saveSliders(d.sliders, false);
+              setSliders(d.sliders);
+              hasCloudData = true;
+            } catch (sErr: any) {
+              logMobileCloud('STORAGE', `Failed writing sliders to local storage on mobile: ${sErr?.message}`, 'error', sErr);
+            }
           }
           if (Array.isArray(d.bookings) && d.bookings.length > 0) saveUmrahBookings(d.bookings, false);
           if (Array.isArray(d.visaBatches) && d.visaBatches.length > 0) saveVisaBatches(d.visaBatches, false);
@@ -296,40 +413,101 @@ export default function App() {
           // Dispatch event to inform all child modules (PartnerManagement, Dashboard, etc.)
           window.dispatchEvent(new CustomEvent('al_hera_data_synced', { detail: d }));
 
+          lastPullTime = Date.now();
+          setCloudSyncStatus('synced');
+          setCloudSyncMessage(`Live connected to Supabase (${candCount} candidates, ${jobsCount} jobs)`);
+          setLastSyncTimestamp(new Date().toLocaleTimeString());
+
           // If this was an initial mobile load with empty result, schedule a fast retry
           if (!hasCloudData && retryCount === 0 && isMounted) {
+            logMobileCloud('HYDRATION', 'First pull returned 0 records on mobile. Scheduling verification retry in 1.8s...', 'warn');
             retryTimeout1 = setTimeout(() => loadCloudData(1), 1800);
           }
-        } else if (!pullRes.success && retryCount < 2 && isMounted) {
-          // Retry for mobile connection delays
-          if (retryCount === 0) retryTimeout1 = setTimeout(() => loadCloudData(1), 1500);
-          else if (retryCount === 1) retryTimeout2 = setTimeout(() => loadCloudData(2), 3500);
+        } else if (!pullRes.success && isMounted) {
+          logMobileCloud(
+            'SUPABASE',
+            `Supabase query failed in ${pullDuration}ms: ${pullRes.message}`,
+            'error',
+            pullRes
+          );
+
+          if (retryCount < 3 && isMounted) {
+            const delay = retryCount === 0 ? 1500 : retryCount === 1 ? 3500 : 7000;
+            logMobileCloud('HYDRATION', `Scheduling mobile re-load attempt #${retryCount + 2} in ${delay}ms...`, 'warn');
+            setCloudSyncStatus('retrying');
+            setCloudSyncMessage(`Re-trying cloud connection in ${Math.round(delay / 1000)}s...`);
+            retryTimeout1 = setTimeout(() => loadCloudData(retryCount + 1), delay);
+          } else {
+            setCloudSyncStatus('failed');
+            setCloudSyncMessage('Supabase connection could not be established. Tap for diagnostics.');
+            logMobileCloud('ERROR', 'Automatic mobile retries exhausted. Waiting for user or network transition.', 'error');
+          }
         }
-      } catch (err) {
-        console.warn('Initial Supabase hydration notice:', err);
-        if (retryCount < 2 && isMounted) {
-          retryTimeout2 = setTimeout(() => loadCloudData(retryCount + 1), 2500);
+      } catch (err: any) {
+        const pullDuration = Date.now() - pullStart;
+        logMobileCloud(
+          'ERROR',
+          `Exception during cloud pull in ${pullDuration}ms: ${err?.message || String(err)}`,
+          'error',
+          { message: err?.message, stack: err?.stack }
+        );
+
+        if (retryCount < 3 && isMounted) {
+          const delay = retryCount === 0 ? 2000 : retryCount === 1 ? 4000 : 8000;
+          setCloudSyncStatus('retrying');
+          setCloudSyncMessage(`Connection interrupted. Re-trying in ${Math.round(delay / 1000)}s...`);
+          retryTimeout2 = setTimeout(() => loadCloudData(retryCount + 1), delay);
+        } else {
+          setCloudSyncStatus('failed');
+          setCloudSyncMessage('Cloud sync interrupted. Check connection.');
         }
       }
     };
 
+    // Initial Execution
     loadCloudData(0);
 
-    // Re-sync when mobile device regains network or browser tab becomes visible
+    // Event 1: Device switches from offline to online
     const handleOnline = () => {
+      logMobileCloud('NETWORK', 'Browser transition: Device came ONLINE. Triggering cloud pull.', 'success');
       loadCloudData(0);
     };
+
+    // Event 2: Device loses network
+    const handleOffline = () => {
+      logMobileCloud('NETWORK', 'Browser transition: Device went OFFLINE.', 'warn');
+      setCloudSyncStatus('waiting_network');
+      setCloudSyncMessage('Mobile device is offline. Waiting for network...');
+    };
+
+    // Event 3: Mobile user switches back to browser tab (visibilitychange)
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
+        const now = Date.now();
+        logMobileCloud('NETWORK', 'Mobile tab returned to foreground (visibility: visible)', 'info');
+        // Only re-pull if last pull was more than 30s ago or was failed
+        if (now - lastPullTime > 30000 || cloudSyncStatus === 'failed') {
+          loadCloudData(0);
+        }
+      }
+    };
+
+    // Event 4: Mobile bfcache restore (Back/Forward Cache navigation)
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        logMobileCloud('NETWORK', 'Page restored from mobile browser Back/Forward Cache (bfcache). Triggering fresh hydration.', 'info');
         loadCloudData(0);
       }
     };
+
     window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
     document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pageshow', handlePageShow);
 
     // Subscribe to realtime multi-device events and pull fresh data instantly
     const unsubscribe = subscribeToSupabaseRealtime((event) => {
-      console.log('Received Supabase sync broadcast:', event);
+      logMobileCloud('SUPABASE', 'Received Supabase realtime multi-device sync broadcast', 'info', event);
       loadCloudData(0);
     });
 
@@ -338,10 +516,70 @@ export default function App() {
       if (retryTimeout1) clearTimeout(retryTimeout1);
       if (retryTimeout2) clearTimeout(retryTimeout2);
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pageshow', handlePageShow);
       unsubscribe();
     };
   }, []);
+
+  // Manual Cloud Re-sync Handler (for Mobile Diagnostics & On-Demand Re-pull)
+  const triggerManualCloudReload = async () => {
+    logMobileCloud('HYDRATION', 'Manual cloud re-sync triggered by user', 'info');
+    showToast('Re-connecting to Supabase cloud...');
+    setCloudSyncStatus('syncing');
+    setCloudSyncMessage('Executing on-demand Supabase cloud pull...');
+
+    try {
+      const pullRes = await pullAllFromSupabase();
+      if (pullRes.success && pullRes.data) {
+        const d = pullRes.data;
+        if (Array.isArray(d.candidates) && d.candidates.length > 0) {
+          saveCandidates(d.candidates, false);
+          setCandidates(d.candidates);
+        }
+        if (Array.isArray(d.jobs) && d.jobs.length > 0) {
+          saveJobs(d.jobs, false);
+          setJobs(d.jobs);
+        }
+        if (Array.isArray(d.packages) && d.packages.length > 0) {
+          saveUmrahPackages(d.packages, false);
+          setPackages(d.packages);
+        }
+        if (Array.isArray(d.partners) && d.partners.length > 0) {
+          savePartners(d.partners, false);
+          setPartners(d.partners);
+        }
+        if (Array.isArray(d.sliders) && d.sliders.length > 0) {
+          saveSliders(d.sliders, false);
+          setSliders(d.sliders);
+        }
+        if (Array.isArray(d.bookings) && d.bookings.length > 0) saveUmrahBookings(d.bookings, false);
+        if (Array.isArray(d.visaBatches) && d.visaBatches.length > 0) saveVisaBatches(d.visaBatches, false);
+        if (Array.isArray(d.individualVisas) && d.individualVisas.length > 0) saveIndividualVisas(d.individualVisas, false);
+        if (Array.isArray(d.partnerPayments) && d.partnerPayments.length > 0) savePartnerPayments(d.partnerPayments, false);
+        if (Array.isArray(d.partnerLedger) && d.partnerLedger.length > 0) savePartnerLedgerEntries(d.partnerLedger, false);
+        if (Array.isArray(d.crmFollowUps) && d.crmFollowUps.length > 0) saveFollowUps(d.crmFollowUps, false);
+        if (Array.isArray(d.templates) && d.templates.length > 0) saveMessageTemplates(d.templates, false);
+        if (Array.isArray(d.logs) && d.logs.length > 0) saveMessageLogs(d.logs, false);
+        if (d.agencyInfo) saveAgencyInfo(d.agencyInfo, false);
+
+        window.dispatchEvent(new CustomEvent('al_hera_data_synced', { detail: d }));
+        setCloudSyncStatus('synced');
+        setCloudSyncMessage(`Live connected to Supabase (${d.candidates?.length || 0} candidates, ${d.jobs?.length || 0} jobs)`);
+        setLastSyncTimestamp(new Date().toLocaleTimeString());
+        showToast(`✓ Cloud synchronized: ${d.candidates?.length || 0} candidates retrieved!`);
+      } else {
+        setCloudSyncStatus('failed');
+        setCloudSyncMessage(pullRes.message || 'Supabase query returned no data');
+        showToast(pullRes.message || 'Supabase query failed', 'error');
+      }
+    } catch (err: any) {
+      setCloudSyncStatus('failed');
+      setCloudSyncMessage(err?.message || 'Error executing pull');
+      showToast(`Sync failed: ${err?.message || 'Network error'}`, 'error');
+    }
+  };
 
   // Synchronize state changes to storage and Supabase
   const handleSaveCandidates = (updatedCandidates: Candidate[]) => {
@@ -967,7 +1205,36 @@ export default function App() {
               </nav>
 
               {/* Right CTA / Admin Login Trigger */}
-              <div className="flex items-center gap-2 sm:gap-3">
+              <div className="flex items-center gap-1.5 sm:gap-3">
+                {/* Mobile & Desktop Cloud Sync Status Indicator */}
+                <button
+                  onClick={() => setIsDiagnosticsModalOpen(true)}
+                  className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-2xs ${
+                    cloudSyncStatus === 'synced'
+                      ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/80'
+                      : cloudSyncStatus === 'failed'
+                      ? 'bg-rose-950/70 border-rose-500/40 text-rose-300 hover:bg-rose-900/80'
+                      : 'bg-amber-950/70 border-amber-500/40 text-amber-300 hover:bg-amber-900/80'
+                  }`}
+                  title="Mobile Cloud Diagnostics & Supabase Network Health"
+                >
+                  <Activity
+                    className={`w-3.5 h-3.5 shrink-0 ${
+                      cloudSyncStatus === 'syncing' || cloudSyncStatus === 'retrying' || cloudSyncStatus === 'waiting_network'
+                        ? 'animate-spin text-amber-400'
+                        : cloudSyncStatus === 'failed'
+                        ? 'text-rose-400'
+                        : 'text-emerald-400'
+                    }`}
+                  />
+                  <span className="hidden sm:inline">
+                    {cloudSyncStatus === 'synced' ? `Cloud Live (${candidates.length})` : cloudSyncStatus === 'failed' ? 'Cloud Offline' : 'Connecting...'}
+                  </span>
+                  <span className="sm:hidden font-mono text-[10px]">
+                    {candidates.length} DB
+                  </span>
+                </button>
+
                 {currentUser ? (
                   <button
                     onClick={() => setCurrentView('admin')}
@@ -1063,6 +1330,27 @@ export default function App() {
                   }`}
                 >
                   <span>About & License</span>
+                </button>
+
+                {/* Mobile Cloud Diagnostics Button */}
+                <button
+                  onClick={() => {
+                    setIsDiagnosticsModalOpen(true);
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full text-left py-2 px-3 rounded-lg flex items-center justify-between text-xs font-bold text-slate-300 hover:bg-slate-800 transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-amber-400" />
+                    <span>Mobile Cloud Diagnostics</span>
+                  </span>
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                    cloudSyncStatus === 'synced'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  }`}>
+                    {cloudSyncStatus}
+                  </span>
                 </button>
 
                 {/* Mobile Administration Access Card */}
@@ -1379,6 +1667,20 @@ export default function App() {
                         {(remainingSeconds % 60).toString().padStart(2, '0')}
                       </span>
                     </div>
+
+                    <button
+                      onClick={() => setIsDiagnosticsModalOpen(true)}
+                      className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl border text-[11px] sm:text-xs font-bold flex items-center gap-1 shadow-xs transition-all ${
+                        cloudSyncStatus === 'synced'
+                          ? 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100'
+                          : 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+                      }`}
+                      title="Mobile Cloud Diagnostics & Supabase Network Health"
+                    >
+                      <Activity className={`w-3 sm:w-3.5 h-3 sm:h-3.5 ${cloudSyncStatus === 'syncing' || cloudSyncStatus === 'retrying' ? 'animate-spin text-amber-600' : 'text-emerald-600'}`} />
+                      <span className="hidden sm:inline">Diagnostics</span>
+                      <span className="sm:hidden">Diag</span>
+                    </button>
 
                     <button
                       onClick={() => setIsSupabaseModalOpen(true)}
@@ -1816,6 +2118,17 @@ export default function App() {
         isOpen={isSupabaseModalOpen}
         onClose={() => setIsSupabaseModalOpen(false)}
         onDataRefreshed={refreshAllState}
+      />
+
+      {/* Mobile Cloud & Network Diagnostics Modal */}
+      <MobileDiagnosticsModal
+        isOpen={isDiagnosticsModalOpen}
+        onClose={() => setIsDiagnosticsModalOpen(false)}
+        onTriggerReSync={triggerManualCloudReload}
+        cloudSyncStatus={cloudSyncStatus}
+        cloudSyncMessage={cloudSyncMessage}
+        lastSyncTimestamp={lastSyncTimestamp}
+        candidateCount={candidates.length}
       />
     </div>
   );
