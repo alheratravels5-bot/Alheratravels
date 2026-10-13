@@ -234,7 +234,7 @@ export const PublicTracking: React.FC<PublicTrackingProps> = ({
               {isLoading ? (
                 <>
                   <RefreshCw className="w-4 h-4 text-amber-400 animate-spin" />
-                  <span>Searching DB...</span>
+                  <span>Searching...</span>
                 </>
               ) : (
                 <>

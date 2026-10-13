@@ -1205,36 +1205,7 @@ export default function App() {
               </nav>
 
               {/* Right CTA / Admin Login Trigger */}
-              <div className="flex items-center gap-1.5 sm:gap-3">
-                {/* Mobile & Desktop Cloud Sync Status Indicator */}
-                <button
-                  onClick={() => setIsDiagnosticsModalOpen(true)}
-                  className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-2xs ${
-                    cloudSyncStatus === 'synced'
-                      ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/80'
-                      : cloudSyncStatus === 'failed'
-                      ? 'bg-rose-950/70 border-rose-500/40 text-rose-300 hover:bg-rose-900/80'
-                      : 'bg-amber-950/70 border-amber-500/40 text-amber-300 hover:bg-amber-900/80'
-                  }`}
-                  title="Mobile Cloud Diagnostics & Supabase Network Health"
-                >
-                  <Activity
-                    className={`w-3.5 h-3.5 shrink-0 ${
-                      cloudSyncStatus === 'syncing' || cloudSyncStatus === 'retrying' || cloudSyncStatus === 'waiting_network'
-                        ? 'animate-spin text-amber-400'
-                        : cloudSyncStatus === 'failed'
-                        ? 'text-rose-400'
-                        : 'text-emerald-400'
-                    }`}
-                  />
-                  <span className="hidden sm:inline">
-                    {cloudSyncStatus === 'synced' ? `Cloud Live (${candidates.length})` : cloudSyncStatus === 'failed' ? 'Cloud Offline' : 'Connecting...'}
-                  </span>
-                  <span className="sm:hidden font-mono text-[10px]">
-                    {candidates.length} DB
-                  </span>
-                </button>
-
+              <div className="flex items-center gap-2 sm:gap-3">
                 {currentUser ? (
                   <button
                     onClick={() => setCurrentView('admin')}
@@ -1330,27 +1301,6 @@ export default function App() {
                   }`}
                 >
                   <span>About & License</span>
-                </button>
-
-                {/* Mobile Cloud Diagnostics Button */}
-                <button
-                  onClick={() => {
-                    setIsDiagnosticsModalOpen(true);
-                    setMobileMenuOpen(false);
-                  }}
-                  className="w-full text-left py-2 px-3 rounded-lg flex items-center justify-between text-xs font-bold text-slate-300 hover:bg-slate-800 transition-colors"
-                >
-                  <span className="flex items-center gap-2">
-                    <Activity className="w-4 h-4 text-amber-400" />
-                    <span>Mobile Cloud Diagnostics</span>
-                  </span>
-                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                    cloudSyncStatus === 'synced'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                  }`}>
-                    {cloudSyncStatus}
-                  </span>
                 </button>
 
                 {/* Mobile Administration Access Card */}
@@ -1929,54 +1879,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Quick 1-Tap Login for Mobile & Desktop */}
-            <div className="bg-amber-50/70 border border-amber-300/80 rounded-2xl p-3 space-y-2">
-              <span className="text-[11px] font-bold text-amber-950 uppercase tracking-wider block flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                <span>1-Tap Quick Administrator Access</span>
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginEmail('alheratravels5@gmail.com');
-                    setLoginPassword('Rps@32862');
-                    handleLogin(undefined, 'alheratravels5@gmail.com', 'Rps@32862');
-                  }}
-                  className="p-2.5 rounded-xl border border-amber-400 bg-white hover:bg-amber-100 text-left transition-all shadow-xs flex items-center justify-between group"
-                >
-                  <div>
-                    <strong className="block text-slate-900 text-xs font-bold group-hover:text-amber-900">
-                      Zeeshan Khan
-                    </strong>
-                    <span className="text-[10px] text-amber-700 font-semibold block">
-                      Super Admin Desk
-                    </span>
-                  </div>
-                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginEmail('operations@alheratravels.com');
-                    setLoginPassword('Rps@Operations2025');
-                    handleLogin(undefined, 'operations@alheratravels.com', 'Rps@Operations2025');
-                  }}
-                  className="p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-left transition-all shadow-xs flex items-center justify-between group"
-                >
-                  <div>
-                    <strong className="block text-slate-900 text-xs font-bold group-hover:text-slate-950">
-                      Mohammad Rashid
-                    </strong>
-                    <span className="text-[10px] text-slate-500 font-semibold block">
-                      Operations Manager
-                    </span>
-                  </div>
-                  <Lock className="w-4 h-4 text-slate-400 shrink-0" />
-                </button>
-              </div>
-            </div>
-
             <form onSubmit={handleLogin} className="space-y-4 text-xs">
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Registered Staff Email *</label>
@@ -2032,7 +1934,7 @@ export default function App() {
               <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center gap-2 text-[11px] text-slate-600">
                 <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span>
-                  <strong>Inactivity Protection:</strong> Sessions automatically terminate after 5 minutes of idle time.
+                  <strong>Inactivity Protection:</strong> Sessions automatically terminate after 4 hours of idle time.
                 </span>
               </div>
 
